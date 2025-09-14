@@ -1,0 +1,147 @@
+:root{
+  --not-active: lightgray;
+  --active: lightgreen;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  margin:0;
+  background: #f3f3f3;
+}
+
+#app {
+  max-width: 600px;
+  width: 95%;
+  margin: 12px auto;
+  padding: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  background: white;
+}
+
+.top-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.power-indicator {
+  width:28px; height:28px;
+  border-radius: 14px;
+  background: var(--not-active);
+  border:1px solid black;
+}
+
+.left-column {
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.vfo-label, .mode-label {
+  width:64px;
+  height:28px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:4px;
+  border:1px solid black;
+  background: var(--active);
+  font-family: monospace;
+  font-weight:600;
+}
+
+.freq-block {
+  flex:1;
+  background: var(--not-active);
+  border-radius:8px;
+  padding:16px;
+  text-align:center;
+}
+
+.freq-main {
+  font-family: monospace;
+  font-weight:bold;
+  font-size: 18px;
+}
+
+.freq-sub {
+  font-family: monospace;
+  font-size: 12px;
+  color: #333;
+}
+
+.right-buttons { display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
+
+.small-btn {
+  width:76px; height:28px;
+  border-radius:4px;
+  border:1px solid black;
+  background: var(--not-active);
+}
+
+.knobs-row {
+  display: flex;
+  flex-wrap: wrap;   /* pozwoli się łamać na małych ekranach */
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+.knob-col {
+  text-align: center;
+  flex: 1 1 30%;     /* dopasowanie szerokości */
+  margin-bottom: 12px;
+}
+
+.knob-col input[type=range] {
+  width:80%;
+  margin-top:8px;
+  height: 40px;
+}
+
+.knob-value { font-family: monospace; font-size: 14px; margin-top:6px; }
+
+.buttons-area { margin-top:12px; }
+
+.btn-row { display:flex; gap:12px; justify-content:center; margin-bottom:8px; }
+
+.round-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 28px;
+}
+
+.smeter-area {
+  margin-top:12px;
+  display:flex;
+  gap:12px;
+  align-items:center;
+}
+
+.smeter-area progress { width:75%; height:18px; }
+
+.status {
+  margin-top:12px;
+  font-size:13px;
+  color:#333;
+  border-top:1px solid #eee;
+  padding-top:8px;
+}
+
+.ptt-row {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.ptt-btn {
+  width: 100%;
+  max-width: 200px;
+  height: 64px;
+  border-radius: 32px;
+  border: 1px solid black;
+  background: lightgray;
+  font-weight: bold;
+  font-size: 20px;
+}
+.ptt-btn.active {
+  background: lightgreen;
+}

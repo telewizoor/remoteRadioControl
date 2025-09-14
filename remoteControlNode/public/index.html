@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Remote Control - FT-450D (Web)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- top row -->
+    <div class="top-row">
+      <div class="power-indicator" id="powerIndicator" title="Radio OFF"></div>
+      <div class="left-column">
+        <div class="vfo-label" id="vfoLabel">VFO A</div>
+        <div class="mode-label" id="modeLabel">USB</div>
+      </div>
+      <div class="freq-block">
+        <div id="freqMain" class="freq-main">--- MHz</div>
+        <div id="freqSub" class="freq-sub">--- kHz</div>
+      </div>
+      <div class="right-buttons">
+        <button class="small-btn" id="attBtn">ATT</button>
+        <button class="small-btn" id="ipoBtn">IPO</button>
+        <button class="small-btn" id="txPowerBtn">-W</button>
+        <div style="height:6px"></div>
+        <button class="small-btn" id="nbBtn">NB</button>
+        <button class="small-btn" id="tunerBtn">TUNER</button>
+        <button class="small-btn" id="monitorBtn">MONITOR</button>
+      </div>
+    </div>
+
+    <!-- knobs -->
+    <div class="knobs-row">
+      <div class="knob-col">
+        <label>FREQ</label>
+        <input id="knobFreq" type="range" min="0" max="100" value="0"/>
+        <div class="knob-value" id="knobFreqVal">—</div>
+      </div>
+      <div class="knob-col">
+        <label>SQUELCH</label>
+        <input id="knobSquelch" type="range" min="0" max="255" value="0"/>
+        <div class="knob-value" id="knobSquelchVal">—</div>
+      </div>
+      <div class="knob-col">
+        <label>VOLUME</label>
+        <input id="knobVolume" type="range" min="0" max="255" value="0"/>
+        <div class="knob-value" id="knobVolumeVal">—</div>
+      </div>
+    </div>
+
+    <!-- buttons -->
+    <div class="buttons-area">
+      <div class="btn-row">
+        <button class="round-btn" id="powerBtn">ON</button>
+        <button class="round-btn" id="bandDownBtn">BAND<br/>↓</button>
+        <button class="round-btn" id="bandUpBtn">BAND<br/>↑</button>
+        <button class="round-btn" id="aEqBBtn">A = B</button>
+        <button class="round-btn" id="vfoSwitchBtn">A / B</button>
+      </div>
+      <div class="btn-row">
+        <button class="round-btn" id="ipoAttBtn">IPO<br/>/ATT</button>
+        <button class="round-btn" id="splitBtn">SPLIT</button>
+        <button class="round-btn" id="modeDownBtn">MODE<br/>↓</button>
+        <button class="round-btn" id="modeUpBtn">MODE<br/>↑</button>
+      </div>
+    </div>
+
+    <!-- S-meter -->
+    <div class="smeter-area">
+      <progress id="smeter" value="0" max="255"></progress>
+      <div id="smeterLabel">S?</div>
+    </div>
+
+    <div id="statusBar" class="status">Starting...</div>
+    <div class="ptt-row">
+        <button class="ptt-btn" id="pttBtn">PTT</button>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
