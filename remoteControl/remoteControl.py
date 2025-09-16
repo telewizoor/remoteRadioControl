@@ -31,11 +31,20 @@ SLOWER_POLL_MS = 2000
 MAX_RETRY_CNT = 3
 FREQ_STEP_SLOW = 100
 FREQ_STEP_FAST = 2500
+PTT_KEY = 'ctrl_r'
 
 NOT_ACTIVE_COLOR = "lightgray"
 ACTIVE_COLOR = "lightgreen"
 
 cyclicRefreshParams = ['AG0', 'SQ0', 'RM0', 'PS', 'FA', 'FB', 'PC', 'AC', 'TX', 'RA0', 'PA0', 'VS', 'NB0', 'MD0', 'ML0']
+
+radioModesRx = ['', 'LSB', 'USB', 'CW', 'FM', 'AM', 'DATA-L', 'CW-R', 'USER-L', 'DATA-U']
+radioModesTx = ['', 'LSB', 'USB', 'CW', 'FM', 'AM', 'CWR']
+
+def findIndexOfString(element, matrix):
+    for i in range(len(matrix)):
+        if matrix[i] == element:
+            return i
 
 class RigctlClient:
     def __init__(self, host: str, port: int, timeout: float = TCP_TIMEOUT):
@@ -459,14 +468,14 @@ class MainWindow(QtWidgets.QMainWindow):
         top_row.addWidget(right_container)
 
         # ---- middle: knobs (FREQ big, then SQUELCH + VOLUME)
-        self.knob_fast_freq = BigKnob("Fast", size=100)
+        self.knob_fast_freq = BigKnob("Fast", size=80)
         self.knob_fast_freq.dial.setWrapping(True)
         self.knob_fast_freq.dial.setNotchesVisible(False)  # bo to ma być ciągłe
         self.knob_fast_freq.dial.setRange(0, 10)          # 0–100 kroków w kółko
         self.knob_fast_freq.dial.valueChanged.connect(self.fast_freq_step)
         self.last_fast_freq_pos = 0
 
-        self.knob_freq = BigKnob("Dial", size=100)
+        self.knob_freq = BigKnob("Dial", size=80)
         self.knob_freq.dial.setWrapping(True)
         self.knob_freq.dial.setNotchesVisible(False)  # bo to ma być ciągłe
         self.knob_freq.dial.setRange(0, 10)          # 0–100 kroków w kółko
@@ -474,12 +483,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_freq_pos = 0
         self.current_freq = 14074000  # Hz (odczyt z rigctld)
 
-        self.knob_squelch = BigKnob("Squelch")
+        self.knob_squelch = BigKnob("Squelch", size=80)
         self.knob_squelch.dial.setNotchTarget(20.0)
         self.knob_squelch.dial.valueChanged.connect(self.squelch_change)
         self.last_squelch_pos = 0
         
-        self.knob_volume = BigKnob("Volume")
+        self.knob_volume = BigKnob("Volume", size=80)
         self.knob_volume.dial.setNotchTarget(20.0)
         self.knob_volume.dial.valueChanged.connect(self.volume_change)
         self.last_volume_pos = 0
@@ -564,7 +573,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_down_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
         btn_row2.addWidget(self.mode_down_btn)
         self.buttons.append(self.mode_down_btn)
-        # self.mode_down_btn.clicked.connect(self.mode_down_btn_clicked)
+        self.mode_down_btn.clicked.connect(self.mode_down_btn_clicked)
 
         # MODE ↑
         self.mode_up_btn = QtWidgets.QPushButton("MODE\n↑")
@@ -572,14 +581,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_up_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
         btn_row2.addWidget(self.mode_up_btn)
         self.buttons.append(self.mode_up_btn)
-        # self.mode_up_btn.clicked.connect(self.mode_up_btn_clicked)
+        self.mode_up_btn.clicked.connect(self.mode_up_btn_clicked)
 
         btns_layout.addLayout(btn_row2)
 
         # ---- S-meter
         self.smeter = QtWidgets.QProgressBar()
         self.smeter.setRange(0, 255)
-        self.smeter.setFont(QtGui.QFont("Monospace", 12))
+        self.smeter.setFixedHeight(16)
+        self.smeter.setFont(QtGui.QFont("Monospace", 10))
 
         # ---- root layout
         root = QtWidgets.QVBoxLayout(central)
@@ -689,6 +699,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 if val:
                     self.tx_active = 1
                     self.centralWidget().setStyleSheet("background-color: red;")
+                    temp = self.windowTitle()
+                    if not "[TX]" in temp:
+                        self.setWindowTitle("[TX] " + temp)
                 else:
                     self.tx_active = 0
                     self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
@@ -718,24 +731,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     # self.worker.pause(SLOWER_POLL_MS)
         elif key == "MD0":
             if val is not None:
-                if val == 1:
-                    self.mode_label.setText("LSB")
-                elif val == 2:
-                    self.mode_label.setText("USB")
-                elif val == 3:
-                    self.mode_label.setText("CW")
-                elif val == 4:
-                    self.mode_label.setText("FM")
-                elif val == 5:
-                    self.mode_label.setText("AM")
-                elif val == 6:
-                    self.mode_label.setText("DATA-L")
-                elif val == 7:
-                    self.mode_label.setText("CW-R")
-                elif val == 8:
-                    self.mode_label.setText("USER-L")
-                elif val == 9:
-                    self.mode_label.setText("DATA-U")
+                self.mode_label.setText(radioModesRx[val])
         elif key == "ML0":
             if val is not None:
                 if val == 0:
@@ -888,6 +884,28 @@ class MainWindow(QtWidgets.QMainWindow):
             self.split_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
         self.client.send(cmd)
 
+    def mode_down_btn_clicked(self):
+        current_mode = findIndexOfString(self.mode_label.text(), radioModesRx)
+
+        if current_mode <= 1:
+            new_mode = len(radioModesTx)
+        else:
+            new_mode = current_mode - 1
+
+        cmd = f"M " + radioModesTx[new_mode] + " 0"
+        self.client.send(cmd)
+
+    def mode_up_btn_clicked(self):
+        current_mode = findIndexOfString(self.mode_label.text(), radioModesRx)
+
+        if current_mode >= len(radioModesTx):
+            new_mode = 1
+        else:
+            new_mode = current_mode + 1
+
+        cmd = f"M " + radioModesTx[new_mode] + " 0"
+        self.client.send(cmd)
+
     def freq_step(self, new_pos: int):
         delta = new_pos - self.last_freq_pos
         self.last_freq_pos = new_pos
@@ -1017,8 +1035,15 @@ def start_keyboard_listener(main_window):
 
     def on_press(key):
         nonlocal tx_pressed
+        # print(key.name)
+        # try:
+        #     if key.char == '\\' and not tx_pressed:
+        #         tx_pressed = True
+        #         main_window.send_tx_signal.emit(1)
+        # except AttributeError:
+        #     pass
         try:
-            if key.char == '\\' and not tx_pressed:
+            if key.name == PTT_KEY and not tx_pressed:
                 tx_pressed = True
                 main_window.send_tx_signal.emit(1)
         except AttributeError:
@@ -1026,8 +1051,14 @@ def start_keyboard_listener(main_window):
 
     def on_release(key):
         nonlocal tx_pressed
+        # try:
+        #     if key.char == '\\':
+        #         tx_pressed = False
+        #         main_window.send_tx_signal.emit(0)
+        # except AttributeError:
+        #     pass
         try:
-            if key.char == '\\':
+            if key.name == PTT_KEY:
                 tx_pressed = False
                 main_window.send_tx_signal.emit(0)
         except AttributeError:
