@@ -36,7 +36,12 @@ PTT_KEY = 'ctrl_r'
 NOT_ACTIVE_COLOR = "lightgray"
 ACTIVE_COLOR = "lightgreen"
 
-cyclicRefreshParams = ['AG0', 'SQ0', 'RM0', 'PS', 'FA', 'FB', 'PC', 'AC', 'TX', 'RA0', 'PA0', 'VS', 'NB0', 'MD0', 'ML0']
+SWR_METER = 1
+ALC_METER = 2
+PO_METER  = 3
+DEFAULT_TX_METER = SWR_METER
+
+cyclicRefreshParams = ['AG0', 'SQ0', 'RM0', 'RM1', 'RM4', 'RM5', 'RM6', 'PS', 'FA', 'FB', 'PC', 'AC', 'TX', 'RA0', 'PA0', 'VS', 'NB0', 'MD0', 'ML0']
 
 radioModesRx = ['', 'LSB', 'USB', 'CW', 'FM', 'AM', 'DATA-L', 'CW-R', 'USER-L', 'DATA-U']
 radioModesTx = ['', 'LSB', 'USB', 'CW', 'FM', 'AM', 'CWR']
@@ -122,11 +127,11 @@ class BigKnob(QtWidgets.QWidget):
 
         self.value_label = QtWidgets.QLabel("—")
         self.value_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.value_label.setFont(QtGui.QFont("Monospace", 14))
+        self.value_label.setFont(QtGui.QFont("Monospace", 10))
 
         self.title_label = QtWidgets.QLabel(self.title)
         self.title_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.title_label.setStyleSheet("letter-spacing: 2px; font-weight: 600;")
+        self.title_label.setStyleSheet("letter-spacing: 1px; font-weight: 600;")
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.dial, alignment=QtCore.Qt.AlignCenter)
@@ -344,7 +349,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Remote Control - FT‑450D")
-        self.setFixedSize(600, 500) 
+        self.windowWidth = 600
+        self.windowHeight = 500
+        self.setFixedSize(self.windowWidth, self.windowHeight) 
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowIcon(QIcon("logo.ico"))
 
@@ -352,6 +359,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
 
         self.tx_active = 0
+        self.tx_meter = DEFAULT_TX_METER
 
         # ---- top: power indicator + freq display
         self.power_indicator = QtWidgets.QLabel()
@@ -457,6 +465,18 @@ class MainWindow(QtWidgets.QMainWindow):
         right_grid.addWidget(self.tuner_status, 1, 1)
         right_grid.addWidget(self.monitor_btn, 1, 3)
 
+        # # Add waterfall button to your existing button layout
+        # self.waterfall_btn = QtWidgets.QPushButton("Waterfall")
+        # self.waterfall_btn.setFixedSize(64, 28)
+        # self.waterfall_btn.setStyleSheet("background-color: lightblue; text-align: center; border-radius: 4px; border: 1px solid black;")
+        # self.waterfall_btn.clicked.connect(self.show_waterfall)
+
+        # Add to your right_grid layout (adjust position as needed)
+        # right_grid.addWidget(self.waterfall_btn, 1, 5)  # Adjust row/column as needed
+
+        # Initialize waterfall window
+        # self.waterfall_window = None
+
         # wstawienie do top_row: freq_widget zachowuje stretch, prawy kontener jest "przyklejony" z prawej
         top_row = QtWidgets.QHBoxLayout()
         top_row.addWidget(self.power_indicator)
@@ -468,14 +488,14 @@ class MainWindow(QtWidgets.QMainWindow):
         top_row.addWidget(right_container)
 
         # ---- middle: knobs (FREQ big, then SQUELCH + VOLUME)
-        self.knob_fast_freq = BigKnob("Fast", size=80)
+        self.knob_fast_freq = BigKnob("Fast", size=60)
         self.knob_fast_freq.dial.setWrapping(True)
         self.knob_fast_freq.dial.setNotchesVisible(False)  # bo to ma być ciągłe
         self.knob_fast_freq.dial.setRange(0, 10)          # 0–100 kroków w kółko
         self.knob_fast_freq.dial.valueChanged.connect(self.fast_freq_step)
         self.last_fast_freq_pos = 0
 
-        self.knob_freq = BigKnob("Dial", size=80)
+        self.knob_freq = BigKnob("Dial", size=60)
         self.knob_freq.dial.setWrapping(True)
         self.knob_freq.dial.setNotchesVisible(False)  # bo to ma być ciągłe
         self.knob_freq.dial.setRange(0, 10)          # 0–100 kroków w kółko
@@ -483,12 +503,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_freq_pos = 0
         self.current_freq = 14074000  # Hz (odczyt z rigctld)
 
-        self.knob_squelch = BigKnob("Squelch", size=80)
+        self.knob_squelch = BigKnob("Squelch", size=60)
         self.knob_squelch.dial.setNotchTarget(20.0)
         self.knob_squelch.dial.valueChanged.connect(self.squelch_change)
         self.last_squelch_pos = 0
         
-        self.knob_volume = BigKnob("Volume", size=80)
+        self.knob_volume = BigKnob("Volume", size=60)
         self.knob_volume.dial.setNotchTarget(20.0)
         self.knob_volume.dial.valueChanged.connect(self.volume_change)
         self.last_volume_pos = 0
@@ -585,21 +605,70 @@ class MainWindow(QtWidgets.QMainWindow):
 
         btns_layout.addLayout(btn_row2)
 
+        METERS_FONT_SIZE = 9
+        METERS_FONT = QtGui.QFont("Courier New", METERS_FONT_SIZE, QtGui.QFont.Bold)
+        METERS_HEIGHT = 16
+        METERS_SPACING = 4
+        METERS_WIDTH = self.windowWidth - 30
+
         # ---- S-meter
-        self.smeter = QtWidgets.QProgressBar()
-        self.smeter.setRange(0, 255)
-        self.smeter.setFixedHeight(16)
-        self.smeter.setFont(QtGui.QFont("Monospace", 10))
+        self.s_meter = QtWidgets.QProgressBar()
+        self.s_meter.setRange(0, 255)
+        self.s_meter.setFixedHeight(METERS_HEIGHT)
+        self.s_meter.setFixedWidth(METERS_WIDTH)
+        self.s_meter.setFont(METERS_FONT)
+        self.s_meter.setValue(0)
+        self.s_meter.setFormat(f"S: {'-':>7}")
+
+        # ---- ALC-meter
+        self.alc_meter = QtWidgets.QProgressBar()
+        self.alc_meter.setRange(0, 255)
+        self.alc_meter.setFixedHeight(METERS_HEIGHT)
+        self.alc_meter.setFixedWidth(METERS_WIDTH)
+        self.alc_meter.setFont(METERS_FONT)
+        self.alc_meter.setValue(0)
+        self.alc_meter.setFormat(f"ALC: {'-':>5}")
+
+        # ---- PO-meter
+        self.po_meter = QtWidgets.QProgressBar()
+        self.po_meter.setRange(0, 255)
+        self.po_meter.setFixedHeight(METERS_HEIGHT)
+        self.po_meter.setFixedWidth(METERS_WIDTH)
+        self.po_meter.setFont(METERS_FONT)
+        self.po_meter.setValue(0)
+        self.po_meter.setFormat(f"PO: {'-':>6}")
+
+        # ---- SWR-meter
+        self.swr_meter = QtWidgets.QProgressBar()
+        self.swr_meter.setRange(0, 255)
+        self.swr_meter.setFixedHeight(METERS_HEIGHT)
+        self.swr_meter.setFixedWidth(METERS_WIDTH)
+        self.swr_meter.setFont(METERS_FONT)
+        self.swr_meter.setValue(0)
+        self.swr_meter.setFormat(f"SWR: {'-':>5}")
+
+        self.cmb_smeter = QtWidgets.QComboBox()
+        self.cmb_smeter.addItem('SWR')
+        self.cmb_smeter.addItem('ALC')
+        self.cmb_smeter.addItem('PWR')
+        self.cmb_smeter.activated.connect(self.cmb_smeter_change)
 
         # ---- root layout
-        root = QtWidgets.QVBoxLayout(central)
-        root.addLayout(top_row)
-        root.addLayout(knobs_row)
-        root.addSpacing(8)
-        root.addLayout(btns_layout)   # dwa rzędy przycisków
-        root.addSpacing(12)
-        root.addWidget(self.smeter)   # S-meter zostaje
-        root.addStretch(0)
+        self.root = QtWidgets.QVBoxLayout(central)
+        self.root.addLayout(top_row)
+        self.root.addLayout(knobs_row)
+        self.root.addSpacing(8)
+        self.root.addLayout(btns_layout)
+        self.root.addSpacing(12)
+        self.root.addWidget(self.s_meter)
+        self.root.addWidget(self.cmb_smeter)
+        # root.addSpacing(METERS_SPACING)
+        # root.addWidget(self.alc_meter)
+        # root.addSpacing(METERS_SPACING)
+        # root.addWidget(self.po_meter)
+        # root.addSpacing(METERS_SPACING)
+        # root.addWidget(self.swr_meter)
+        self.root.addStretch(0)
 
         self.status = self.statusBar()
 
@@ -636,16 +705,30 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not self.knob_volume.user_active:
                     self.current_vol = val
                     self.knob_volume.set_value(val)
-        elif key == "RM0":
+        elif key == "RM1":
             if val is not None:
-                self.smeter.setRange(0, 255)
-                self.smeter.setValue(val)
-                if not self.tx_active:
-                    s_label = self.smeter_label(val)
-                    self.smeter.setFormat(f"{s_label:3s}")
-                else:
-                    swr_label = self.swr_label(val)
-                    self.smeter.setFormat(f"SWR: {swr_label:3s}")
+                self.s_meter.setRange(0, 255)
+                self.s_meter.setValue(val)
+                s_label = self.s_meter_label(val)
+                self.s_meter.setFormat(f"S: {s_label:>7}")
+        elif key == "RM4":
+            if val is not None:
+                self.alc_meter.setRange(0, 255)
+                self.alc_meter.setValue(val)
+                alc_label = int(val / 255 * 100)
+                self.alc_meter.setFormat(f"ALC: {alc_label:>5}")
+        elif key == "RM5":
+            if val is not None:
+                self.po_meter.setRange(0, 255)
+                self.po_meter.setValue(val)
+                po_label = int(val / 255 * 100)
+                self.po_meter.setFormat(f"PO: {po_label:>6}")
+        elif key == "RM6":
+            if val is not None:
+                self.swr_meter.setRange(0, 255)
+                self.swr_meter.setValue(val)
+                swr_label = self.swr_label(val)
+                self.swr_meter.setFormat(f"SWR: {swr_label:>5}")
         elif key == "FA":
             if val is not None:
                 self.vfoa_freq = val
@@ -702,10 +785,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     temp = self.windowTitle()
                     if not "[TX]" in temp:
                         self.setWindowTitle("[TX] " + temp)
+                    self.replace_s_meter_when_tx(1)
                 else:
                     self.tx_active = 0
                     self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
                     self.centralWidget().setStyleSheet("")
+                    self.replace_s_meter_when_tx(0)
         elif key == "NB0":
             if val is not None:
                 if val:
@@ -741,10 +826,18 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.monitor_active = 1
                     self.monitor_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
 
+    # def show_waterfall(self):
+    #     """Show waterfall window"""
+    #     if self.waterfall_window is None:
+    #         self.waterfall_window = WaterfallWindow(self)
+        
+    #     self.waterfall_window.show()
+    #     self.waterfall_window.raise_()
+
     def set_frequency_label(self, label, freq):
         label.setText(str(float(freq/1000000)).ljust(8, '0').zfill(8) + " MHz")
 
-    def smeter_label(self, val: int) -> str:
+    def s_meter_label(self, val: int) -> str:
         """
         Mapowanie wartości RM0 (0–255) na skalę S-metra.
         Używa tabeli kalibracyjnej z interpolacją liniową.
@@ -888,7 +981,7 @@ class MainWindow(QtWidgets.QMainWindow):
         current_mode = findIndexOfString(self.mode_label.text(), radioModesRx)
 
         if current_mode <= 1:
-            new_mode = len(radioModesTx)
+            new_mode = len(radioModesTx) - 1
         else:
             new_mode = current_mode - 1
 
@@ -998,9 +1091,29 @@ class MainWindow(QtWidgets.QMainWindow):
         cmd = f"T 0"
         self.client.send(cmd)
 
+    def replace_s_meter_when_tx(self, tx_state):
+        if self.tx_meter is SWR_METER:
+            new_meter = self.swr_meter
+        elif self.tx_meter is ALC_METER:
+            new_meter = self.alc_meter
+        elif self.tx_meter is PO_METER:
+            new_meter = self.po_meter
+        else:
+            new_meter = self.swr_meter
+
+        if tx_state:
+            self.root.replaceWidget(self.s_meter, new_meter)
+            self.s_meter.hide()
+            new_meter.show()
+        else:
+            self.root.replaceWidget(new_meter, self.s_meter)
+            self.s_meter.show()
+            new_meter.hide()
+
     @QtCore.pyqtSlot(int)
     def tx_action(self, val: int):
         temp = self.windowTitle()
+
         if val:
             cmd = f"T 1"
             self.setWindowTitle("[TX] " + temp)
@@ -1010,8 +1123,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
             self.pause_polling.emit(100)
             QTimer.singleShot(50, self.disable_tx)
-            # self.centralWidget().setStyleSheet("")
-        # print(cmd)
+
         self.client.send(cmd)
 
     def set_tx_power(self):
@@ -1020,6 +1132,14 @@ class MainWindow(QtWidgets.QMainWindow):
             value = dialog.get_value()
             cmd = f"L RFPOWER {value/100:0.2f}"
             self.client.send(cmd)
+
+    def cmb_smeter_change(self):
+        if self.cmb_smeter.currentText() == 'ALC':
+            self.tx_meter = ALC_METER
+        elif self.cmb_smeter.currentText() == 'SWR':
+            self.tx_meter = SWR_METER
+        elif self.cmb_smeter.currentText() == 'PWR':
+            self.tx_meter = PO_METER
 
     def check_swr(self):
         cmd = f"wEX04209;"
