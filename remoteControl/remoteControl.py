@@ -19,6 +19,8 @@ from PyQt5.QtCore import QTimer
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtGui import QIcon
 
+from waterfallWindow import WaterfallWindow
+
 # U MON 1 <- Monitor
 
 HOST = "192.168.152.12"
@@ -268,6 +270,10 @@ class PollWorker(QtCore.QObject):
 
     def poll_all(self):
         if not self.client.connected:
+            try:
+                self.client = RigctlClient(HOST, PORT, timeout=TCP_TIMEOUT)
+            except:
+                pass
             return
         # resp = self.client.send("wAG0;SQ0;SM0;")
         cmd = "w"
@@ -465,17 +471,17 @@ class MainWindow(QtWidgets.QMainWindow):
         right_grid.addWidget(self.tuner_status, 1, 1)
         right_grid.addWidget(self.monitor_btn, 1, 3)
 
-        # # Add waterfall button to your existing button layout
-        # self.waterfall_btn = QtWidgets.QPushButton("Waterfall")
-        # self.waterfall_btn.setFixedSize(64, 28)
-        # self.waterfall_btn.setStyleSheet("background-color: lightblue; text-align: center; border-radius: 4px; border: 1px solid black;")
-        # self.waterfall_btn.clicked.connect(self.show_waterfall)
+        # Add waterfall button to your existing button layout
+        self.waterfall_btn = QtWidgets.QPushButton("Waterfall")
+        self.waterfall_btn.setFixedSize(64, 28)
+        self.waterfall_btn.setStyleSheet("background-color: lightblue; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.waterfall_btn.clicked.connect(self.show_waterfall)
 
         # Add to your right_grid layout (adjust position as needed)
         # right_grid.addWidget(self.waterfall_btn, 1, 5)  # Adjust row/column as needed
 
         # Initialize waterfall window
-        # self.waterfall_window = None
+        self.waterfall_window = None
 
         # wstawienie do top_row: freq_widget zachowuje stretch, prawy kontener jest "przyklejony" z prawej
         top_row = QtWidgets.QHBoxLayout()
@@ -566,7 +572,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.vfo_switch_btn.clicked.connect(self.vfo_switch_btn_clicked)
 
         btns_layout.addLayout(btn_row1)
-        btns_layout.addSpacing(10)
+        btns_layout.addSpacing(1)
 
         # drugi rząd
         btn_row2 = QtWidgets.QHBoxLayout()
@@ -652,6 +658,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_smeter.addItem('ALC')
         self.cmb_smeter.addItem('PWR')
         self.cmb_smeter.activated.connect(self.cmb_smeter_change)
+        self.cmb_smeter.setFixedWidth(64)
+
+        self.swr_btn = QtWidgets.QPushButton("SWR")
+        self.swr_btn.setFixedSize(64, 28)
+        self.swr_btn.setStyleSheet("background-color: " + "#FFC21C" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.swr_btn.pressed.connect(self.swr_btn_pressed)
+        self.swr_btn.released.connect(self.swr_btn_released)
+
+        bottom_row = QtWidgets.QHBoxLayout()
+        # bottom_row.addStretch()
+        bottom_row.addWidget(self.swr_btn)
+        bottom_row.addStretch()
+        bottom_row.addWidget(self.cmb_smeter)
 
         # ---- root layout
         self.root = QtWidgets.QVBoxLayout(central)
@@ -659,9 +678,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.root.addLayout(knobs_row)
         self.root.addSpacing(8)
         self.root.addLayout(btns_layout)
-        self.root.addSpacing(12)
+        self.root.addSpacing(16)
         self.root.addWidget(self.s_meter)
-        self.root.addWidget(self.cmb_smeter)
+        self.root.addSpacing(8)
+        self.root.addLayout(bottom_row)
+        # self.root.addWidget(self.swr_btn)
         # root.addSpacing(METERS_SPACING)
         # root.addWidget(self.alc_meter)
         # root.addSpacing(METERS_SPACING)
@@ -826,13 +847,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.monitor_active = 1
                     self.monitor_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
 
-    # def show_waterfall(self):
-    #     """Show waterfall window"""
-    #     if self.waterfall_window is None:
-    #         self.waterfall_window = WaterfallWindow(self)
+    def show_waterfall(self):
+        """Show waterfall window"""
+        if self.waterfall_window is None:
+            self.waterfall_window = WaterfallWindow(self)
         
-    #     self.waterfall_window.show()
-    #     self.waterfall_window.raise_()
+        self.waterfall_window.show()
+        self.waterfall_window.raise_()
 
     def set_frequency_label(self, label, freq):
         label.setText(str(float(freq/1000000)).ljust(8, '0').zfill(8) + " MHz")
@@ -1140,6 +1161,33 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tx_meter = SWR_METER
         elif self.cmb_smeter.currentText() == 'PWR':
             self.tx_meter = PO_METER
+
+    def swr_btn_pressed(self):
+        self.current_power = self.tx_power_btn.text().replace('W', '')
+        self.current_mode = self.mode_label.text()
+        cmd = f"M CW 0"
+        self.client.send(cmd)
+
+        cmd = f"L RFPOWER {10/100:0.2f}"
+        self.client.send(cmd)
+        
+        self.send_tx_signal.emit(1)
+
+    def swr_btn_released(self):
+        if "SWR" in self.swr_meter.text():
+            self.current_swr = float(self.swr_meter.text().replace("SWR", " ").replace(" ", "").replace(":", ""))
+        else:
+            self.current_swr = float(10)
+
+        # self.swr_btn.setText(f"SWR: {self.current_swr:1.1f}")
+
+        self.send_tx_signal.emit(0)
+
+        cmd = f"M " + self.current_mode + " 0"
+        self.client.send(cmd)
+
+        cmd = f"L RFPOWER {int(self.current_power)/100:0.2f}"
+        self.client.send(cmd)
 
     def check_swr(self):
         cmd = f"wEX04209;"
