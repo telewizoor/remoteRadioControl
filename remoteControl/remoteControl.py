@@ -43,7 +43,11 @@ ALC_METER = 2
 PO_METER  = 3
 DEFAULT_TX_METER = SWR_METER
 
-cyclicRefreshParams = ['AG0', 'SQ0', 'RM0', 'RM1', 'RM4', 'RM5', 'RM6', 'PS', 'FA', 'FB', 'PC', 'AC', 'TX', 'RA0', 'PA0', 'VS', 'NB0', 'MD0', 'ML0']
+RADIO_WIDTH_NARROW = 1800
+RADIO_WIDTH_NORMAL = 2400
+RADIO_WIDTH_WIDE   = 3000
+
+cyclicRefreshParams = ['AG0', 'SQ0', 'RM0', 'RM1', 'RM4', 'RM5', 'RM6', 'PS', 'FA', 'FB', 'PC', 'AC', 'TX', 'RA0', 'PA0', 'VS', 'NB0', 'MD0', 'ML0', 'SH0', 'IS0', 'BP00']
 
 radioModesRx = ['', 'LSB', 'USB', 'CW', 'FM', 'AM', 'DATA-L', 'CW-R', 'USER-L', 'DATA-U']
 radioModesTx = ['', 'LSB', 'USB', 'CW', 'FM', 'AM', 'CWR']
@@ -111,7 +115,7 @@ def parse_level_from_response(resp):
 class BigKnob(QtWidgets.QWidget):
     released = QtCore.pyqtSignal(int)
 
-    def __init__(self, title: str, parent=None, size: int = 100):
+    def __init__(self, title: str, parent=None, size: int = 100, value_label_visible=True):
         super().__init__(parent)
         self.title = title
         self.user_active = False
@@ -137,7 +141,8 @@ class BigKnob(QtWidgets.QWidget):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.dial, alignment=QtCore.Qt.AlignCenter)
-        layout.addWidget(self.value_label)
+        if value_label_visible:
+            layout.addWidget(self.value_label)
         layout.addWidget(self.title_label)
 
         self.dial.installEventFilter(self)
@@ -257,6 +262,7 @@ class PollWorker(QtCore.QObject):
         """Zatrzymuje polling na podany czas (ms)."""
         if self._timer and self._timer.isActive():
             self._timer.stop()
+            print('pause')
             QtCore.QTimer.singleShot(ms, self.resume)
 
     @QtCore.pyqtSlot()
@@ -264,7 +270,7 @@ class PollWorker(QtCore.QObject):
         """Wznawia polling."""
         self.retry_cnt = 0
         self._timer.setInterval(self.poll_ms)
-        # print(self.poll_ms)
+        print(self.poll_ms)
         if self._timer and not self._timer.isActive():
             self._timer.start()
 
@@ -283,14 +289,13 @@ class PollWorker(QtCore.QObject):
         resp = self.client.send(cmd)
 
         if not resp:
-            # print("1")
             self.status.emit(f"No answer from {HOST}:{PORT}")
             if self.retry_cnt > MAX_RETRY_CNT:
                 self._timer.setInterval(SLOWER_POLL_MS)  # zwolnij do 2s
             else:
                 self.retry_cnt += 1
             return
-        elif "-" in resp:
+        elif "-" in resp and not 'IS0' in resp:
             # print("-20")
             if self.retry_cnt > MAX_RETRY_CNT:
                 self._timer.setInterval(9999999)  # zwolnij do 2s
@@ -356,16 +361,21 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Remote Control - FT‑450D")
         self.windowWidth = 600
-        self.windowHeight = 500
+        self.windowHeight = 550
         self.setFixedSize(self.windowWidth, self.windowHeight) 
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowIcon(QIcon("logo.ico"))
+
+        self.ignore_next_data_switch = False
+        self.ignore_next_data_cnt = 2
 
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
 
         self.tx_active = 0
         self.tx_meter = DEFAULT_TX_METER
+
+        self.radio_width = RADIO_WIDTH_NORMAL
 
         # ---- top: power indicator + freq display
         self.power_indicator = QtWidgets.QLabel()
@@ -494,14 +504,14 @@ class MainWindow(QtWidgets.QMainWindow):
         top_row.addWidget(right_container)
 
         # ---- middle: knobs (FREQ big, then SQUELCH + VOLUME)
-        self.knob_fast_freq = BigKnob("Fast", size=60)
+        self.knob_fast_freq = BigKnob("Fast", size=80, value_label_visible=False)
         self.knob_fast_freq.dial.setWrapping(True)
         self.knob_fast_freq.dial.setNotchesVisible(False)  # bo to ma być ciągłe
         self.knob_fast_freq.dial.setRange(0, 10)          # 0–100 kroków w kółko
         self.knob_fast_freq.dial.valueChanged.connect(self.fast_freq_step)
         self.last_fast_freq_pos = 0
 
-        self.knob_freq = BigKnob("Dial", size=60)
+        self.knob_freq = BigKnob("Dial", size=80, value_label_visible=False)
         self.knob_freq.dial.setWrapping(True)
         self.knob_freq.dial.setNotchesVisible(False)  # bo to ma być ciągłe
         self.knob_freq.dial.setRange(0, 10)          # 0–100 kroków w kółko
@@ -653,6 +663,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.swr_meter.setValue(0)
         self.swr_meter.setFormat(f"SWR: {'-':>5}")
 
+        self.tx_meter_label = QtWidgets.QLabel("TX meter:")
         self.cmb_smeter = QtWidgets.QComboBox()
         self.cmb_smeter.addItem('SWR')
         self.cmb_smeter.addItem('ALC')
@@ -660,17 +671,95 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_smeter.activated.connect(self.cmb_smeter_change)
         self.cmb_smeter.setFixedWidth(64)
 
-        self.swr_btn = QtWidgets.QPushButton("SWR")
-        self.swr_btn.setFixedSize(64, 28)
-        self.swr_btn.setStyleSheet("background-color: " + "#FFC21C" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.swr_btn = QtWidgets.QPushButton("Check SWR")
+        self.swr_btn.setFixedSize(78, 28)
+        self.swr_btn.setStyleSheet("background-color: " + "#FFDF85" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.swr_btn.pressed.connect(self.swr_btn_pressed)
         self.swr_btn.released.connect(self.swr_btn_released)
+
+        # Layout poziomy
+        radio_width = QtWidgets.QHBoxLayout()
+
+        # Radio buttons
+        self.radio_width_label = QtWidgets.QLabel("Width:")
+        self.radio_narrow = QtWidgets.QRadioButton("NARROW")
+        self.radio_normal = QtWidgets.QRadioButton("NORMAL")
+        self.radio_wide = QtWidgets.QRadioButton("WIDE")
+
+        # Domyślne zaznaczenie (opcjonalnie)
+        self.radio_normal.setChecked(True)
+
+        # Dodajemy do layoutu
+        radio_width.addWidget(self.radio_narrow)
+        radio_width.addWidget(self.radio_normal)
+        radio_width.addWidget(self.radio_wide)
+
+        # Grupa przycisków (jednokrotny wybór)
+        self.group = QtWidgets.QButtonGroup(self)
+        self.group.addButton(self.radio_narrow)
+        self.group.addButton(self.radio_normal)
+        self.group.addButton(self.radio_wide)
+
+        # Po zmianie wyboru wywołaj funkcję
+        self.group.buttonClicked.connect(self.radio_width_changed)
 
         bottom_row = QtWidgets.QHBoxLayout()
         # bottom_row.addStretch()
         bottom_row.addWidget(self.swr_btn)
+        bottom_row.addSpacing(48)
+        bottom_row.addWidget(self.radio_width_label)
+        bottom_row.addLayout(radio_width)
         bottom_row.addStretch()
+        bottom_row.addWidget(self.tx_meter_label)
         bottom_row.addWidget(self.cmb_smeter)
+
+        # --- slider
+        self.shift_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.shift_slider.setFixedWidth(100)
+        self.shift_slider.setMinimum(-1000)
+        self.shift_slider.setMaximum(1000)
+        self.shift_slider.setSingleStep(101)
+        self.shift_slider.setPageStep(101)
+        self.shift_slider.setTickInterval(250)
+        self.shift_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.shift_slider.setValue(0)
+
+        # "sticky point" w środku
+        self.shift_slider.valueChanged.connect(self.shift_slider_move)
+
+        # --- groupbox dla slidera
+        shift_group = QtWidgets.QGroupBox("Shift")
+        shift_group.setFixedWidth(self.shift_slider.width() + 24)
+        shift_layout = QtWidgets.QHBoxLayout(shift_group)
+        shift_layout.addWidget(self.shift_slider)
+        # shift_layout.addStretch()
+
+        # --- slider
+        self.notch_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.notch_slider.setFixedWidth(150)
+        self.notch_slider.setMinimum(0)
+        self.notch_slider.setMaximum(4000)
+        self.notch_slider.setSingleStep(200)
+        self.notch_slider.setPageStep(200)
+        self.notch_slider.setTickInterval(250)
+        self.notch_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.notch_slider.setValue(2000)
+        self.notch_slider.valueChanged.connect(self.notch_slider_move)
+
+        # --- groupbox dla slidera
+        self.notch_group = QtWidgets.QGroupBox("Notch")
+        self.notch_group.setCheckable(True)
+        self.notch_group.setChecked(False)
+        self.notch_group.setFixedWidth(self.notch_slider.width() + 24)
+        self.notch_group.clicked.connect(self.notch_checked)
+        notch_layout = QtWidgets.QHBoxLayout(self.notch_group)
+        notch_layout.addWidget(self.notch_slider)
+
+        # --- dodanie do bottom_row_2
+        bottom_row_2 = QtWidgets.QHBoxLayout()
+        bottom_row_2.addWidget(shift_group)
+        bottom_row_2.addWidget(self.notch_group)
+        bottom_row_2.addStretch()
 
         # ---- root layout
         self.root = QtWidgets.QVBoxLayout(central)
@@ -682,6 +771,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.root.addWidget(self.s_meter)
         self.root.addSpacing(8)
         self.root.addLayout(bottom_row)
+        self.root.addSpacing(8)
+        self.root.addLayout(bottom_row_2)
         # self.root.addWidget(self.swr_btn)
         # root.addSpacing(METERS_SPACING)
         # root.addWidget(self.alc_meter)
@@ -716,6 +807,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.pyqtSlot(str, object)
     def update_value(self, key, val):
+        if self.ignore_next_data_switch:
+            if self.ignore_next_data_cnt:
+                # Do it only for one time
+                if key == "SQ0":
+                    self.ignore_next_data_cnt = self.ignore_next_data_cnt - 1
+                print('dupa')
+                return
+            else:
+                self.ignore_next_data_switch = False
+
         if key == "SQ0":
             if val is not None:
                 if not self.knob_squelch.user_active:
@@ -846,6 +947,53 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif val == 1:
                     self.monitor_active = 1
                     self.monitor_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        elif key == "SH0":
+            if val is not None:
+                if val <= 10:
+                    self.radio_width = RADIO_WIDTH_NARROW
+                    self.radio_narrow.setChecked(True)
+                elif val > 10 and val <= 21:
+                    self.radio_width = RADIO_WIDTH_NORMAL
+                    self.radio_normal.setChecked(True)
+                elif val > 21 and val <= 31:
+                    self.radio_width = RADIO_WIDTH_WIDE
+                    self.radio_wide.setChecked(True)
+        elif key == "IS0":
+            if val is not None:
+                # self.shift_slider.setValue(val)
+                pass
+
+        elif key == "BP00":
+            if val is not None:
+                if val:
+                    self.notch_group.setChecked(True)
+                else:
+                    self.notch_group.setChecked(False)
+
+    def ignore_next_data(self, cnt=2):
+        self.ignore_next_data_switch = True
+        self.ignore_next_data_cnt = cnt
+
+    def shift_slider_move(self, value):
+        center = 0
+        tolerance = 200  # zakres "magnesu"
+        if abs(value - center) <= tolerance:
+            self.shift_slider.setValue(center)
+
+        cmd = f"L IF " + str(value)
+        self.client.send(cmd)
+
+    def notch_slider_move(self, value):
+        cmd = f"L NOTCHF " + str(value)
+        self.client.send(cmd)
+
+    def notch_checked(self, value):
+        if value:
+            cmd = f"U MN 1"
+        else:
+            cmd = f"U MN 0"
+        self.ignore_next_data()
+        self.client.send(cmd)
 
     def show_waterfall(self):
         """Show waterfall window"""
@@ -856,7 +1004,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.waterfall_window.raise_()
 
     def set_frequency_label(self, label, freq):
-        label.setText(str(float(freq/1000000)).ljust(8, '0').zfill(8) + " MHz")
+        # label.setText(str(float(freq/1000000)).ljust(8, '0').zfill(8) + " MHz")
+        label.setText(f"{freq/1000000:02.5f}MHz")
 
     def s_meter_label(self, val: int) -> str:
         """
@@ -1024,31 +1173,53 @@ class MainWindow(QtWidgets.QMainWindow):
         delta = new_pos - self.last_freq_pos
         self.last_freq_pos = new_pos
 
+        if delta > 5:   # wrap forward
+            delta -= 100
+        elif delta < -5:  # wrap backward
+            delta += 100
+
         if delta >= 0:
             delta = 1
+            self.current_freq -= self.current_freq%FREQ_STEP_SLOW
+            self.current_freq += delta * FREQ_STEP_SLOW
         else:
             delta = -1
+            # print(self.current_freq%FREQ_STEP_SLOW)
+            if self.current_freq%FREQ_STEP_SLOW:
+                self.current_freq -= self.current_freq%FREQ_STEP_SLOW
+            else:
+                self.current_freq += delta * FREQ_STEP_SLOW
 
-        if delta != 0:
-            self.current_freq -= self.current_freq%FREQ_STEP_SLOW
-            self.current_freq += delta * FREQ_STEP_SLOW   # krok 10 Hz
-            cmd = f"F {self.current_freq}\n"
-            self.client.send(cmd)
+        cmd = f"F {self.current_freq}\n"
+        self.set_frequency_label(self.freq_display, self.current_freq)
+        self.ignore_next_data()
+        self.client.send(cmd)
     
     def fast_freq_step(self, new_pos: int):
-        delta = new_pos - self.last_freq_pos
-        self.last_freq_pos = new_pos
+        delta = new_pos - self.last_fast_freq_pos
+        self.last_fast_freq_pos = new_pos
+
+        if delta > 5:   # wrap forward
+            delta -= 100
+        elif delta < -5:  # wrap backward
+            delta += 100
 
         if delta >= 0:
             delta = 1
+            self.current_freq -= self.current_freq%FREQ_STEP_FAST
+            self.current_freq += delta * FREQ_STEP_FAST
         else:
             delta = -1
+            # print(self.current_freq%FREQ_STEP_FAST)
+            if self.current_freq%FREQ_STEP_FAST:
+                self.current_freq -= self.current_freq%FREQ_STEP_FAST
+            else:
+                self.current_freq += delta * FREQ_STEP_FAST
 
-        if delta != 0:
-            self.current_freq -= self.current_freq%FREQ_STEP_FAST
-            self.current_freq += delta * FREQ_STEP_FAST   # krok 10 Hz
-            cmd = f"F {self.current_freq}\n"
-            self.client.send(cmd)
+        cmd = f"F {self.current_freq}\n"
+        self.set_frequency_label(self.freq_display, self.current_freq)
+        self.ignore_next_data()
+        self.client.send(cmd)
 
     def volume_change(self, new_pos: int):
         delta = new_pos - self.last_volume_pos
@@ -1145,6 +1316,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self.pause_polling.emit(100)
             QTimer.singleShot(50, self.disable_tx)
 
+        self.client.send(cmd)
+
+    def radio_width_changed(self):
+        if self.radio_narrow.isChecked():
+            self.radio_width = RADIO_WIDTH_NARROW
+        elif self.radio_normal.isChecked():
+            self.radio_width = RADIO_WIDTH_NORMAL
+        elif self.radio_wide.isChecked():
+            self.radio_width = RADIO_WIDTH_WIDE
+
+        cmd = f"M " + self.mode_label.text() + " " + str(self.radio_width)
+        self.ignore_next_data()
         self.client.send(cmd)
 
     def set_tx_power(self):
