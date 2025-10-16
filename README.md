@@ -9,3 +9,6 @@ Mumble for voice transmission.
 
 **Working with LOG4OM2**
 <img width="2560" height="1336" alt="control2" src="https://github.com/user-attachments/assets/9d9cfd7d-4a3c-43ac-8c2d-eaee79caa6e7" />
+
+**Adapter for MH31 mic connected to PC**
+![image](https://github.com/user-attachments/assets/f780dbc4-8c6a-420e-ae01-91700deb08a3)
