@@ -14,10 +14,13 @@ import socket
 import re
 import time
 import threading
+from soundPlayer import playSound, stopSound
 from pynput import keyboard
 from PyQt5.QtCore import QTimer
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtGui import QIcon
+import os 
+dir_path = os.path.dirname(os.path.realpath(__file__))
 
 from waterfallWindow import WaterfallWindow
 
@@ -27,16 +30,28 @@ HOST = "192.168.152.12"
 # HOST = "192.168.152.2"
 PORT = 4532
 DUMMY_PORT = 4534
+ANTENNA_SWITCH_PORT = 5000
+ANTENNA_1_NAME = 'Hexbeam'
+ANTENNA_1_CMD = '1'
+ANTENNA_2_NAME = 'Dipole'
+ANTENNA_2_CMD = '2'
 TCP_TIMEOUT = 0.1
 POLL_MS = 500
 SLOWER_POLL_MS = 2000
 MAX_RETRY_CNT = 3
 FREQ_STEP_SLOW = 100
 FREQ_STEP_FAST = 2500
+TX_OFF_DELAY = 300
 PTT_KEY = 'ctrl_r'
+FST_KEY_MOD = 'shift'
+FST_KEY = 'w'
 
+BUTTON_COLOR = "#FFDF85"
 NOT_ACTIVE_COLOR = "lightgray"
 ACTIVE_COLOR = "lightgreen"
+
+REC1_PATH = dir_path + '/recs/sp9pho_en.wav'
+REC2_PATH = dir_path + '/recs/cq_sp9pho.wav'
 
 SWR_METER = 1
 ALC_METER = 2
@@ -262,7 +277,7 @@ class PollWorker(QtCore.QObject):
         """Zatrzymuje polling na podany czas (ms)."""
         if self._timer and self._timer.isActive():
             self._timer.stop()
-            print('pause')
+            # print('pause')
             QtCore.QTimer.singleShot(ms, self.resume)
 
     @QtCore.pyqtSlot()
@@ -270,7 +285,7 @@ class PollWorker(QtCore.QObject):
         """Wznawia polling."""
         self.retry_cnt = 0
         self._timer.setInterval(self.poll_ms)
-        print(self.poll_ms)
+        # print(self.poll_ms)
         if self._timer and not self._timer.isActive():
             self._timer.start()
 
@@ -291,14 +306,14 @@ class PollWorker(QtCore.QObject):
         if not resp:
             self.status.emit(f"No answer from {HOST}:{PORT}")
             if self.retry_cnt > MAX_RETRY_CNT:
-                self._timer.setInterval(SLOWER_POLL_MS)  # zwolnij do 2s
+                self._timer.setInterval(SLOWER_POLL_MS)
             else:
                 self.retry_cnt += 1
             return
         elif "-" in resp and not 'IS0' in resp:
             # print("-20")
             if self.retry_cnt > MAX_RETRY_CNT:
-                self._timer.setInterval(9999999)  # zwolnij do 2s
+                self._timer.setInterval(9999999)
                 self.status.emit(f"Polling stopped")
             else:
                 self.retry_cnt += 1
@@ -328,6 +343,7 @@ class PollWorker(QtCore.QObject):
 
         if ok_any:
             self.status.emit(f"Connected with {HOST}:{PORT}")
+            pass
 
 class DoubleClickButton(QtWidgets.QPushButton):
     singleClicked = QtCore.pyqtSignal()
@@ -354,8 +370,10 @@ class DoubleClickButton(QtWidgets.QPushButton):
 
 class MainWindow(QtWidgets.QMainWindow):
     send_tx_signal = QtCore.pyqtSignal(int)
+    send_fst_signal = QtCore.pyqtSignal(int)
     pause_polling = QtCore.pyqtSignal(int)
     resume_polling = QtCore.pyqtSignal()
+    sound_finished = QtCore.pyqtSignal(object)
 
     def __init__(self):
         super().__init__()
@@ -373,6 +391,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
 
         self.tx_active = 0
+        self.tx_sent = 0
         self.tx_meter = DEFAULT_TX_METER
 
         self.radio_width = RADIO_WIDTH_NORMAL
@@ -673,7 +692,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.swr_btn = QtWidgets.QPushButton("Check SWR")
         self.swr_btn.setFixedSize(78, 28)
-        self.swr_btn.setStyleSheet("background-color: " + "#FFDF85" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.swr_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.swr_btn.pressed.connect(self.swr_btn_pressed)
         self.swr_btn.released.connect(self.swr_btn_released)
 
@@ -681,10 +700,10 @@ class MainWindow(QtWidgets.QMainWindow):
         radio_width = QtWidgets.QHBoxLayout()
 
         # Radio buttons
-        self.radio_width_label = QtWidgets.QLabel("Width:")
-        self.radio_narrow = QtWidgets.QRadioButton("NARROW")
-        self.radio_normal = QtWidgets.QRadioButton("NORMAL")
-        self.radio_wide = QtWidgets.QRadioButton("WIDE")
+        self.radio_width_label = QtWidgets.QLabel("")
+        self.radio_narrow = QtWidgets.QRadioButton("NAR")
+        self.radio_normal = QtWidgets.QRadioButton("NOR")
+        self.radio_wide = QtWidgets.QRadioButton("WID")
 
         # Domyślne zaznaczenie (opcjonalnie)
         self.radio_normal.setChecked(True)
@@ -703,12 +722,37 @@ class MainWindow(QtWidgets.QMainWindow):
         # Po zmianie wyboru wywołaj funkcję
         self.group.buttonClicked.connect(self.radio_width_changed)
 
+        # Layout poziomy
+        antenna_switch = QtWidgets.QHBoxLayout()
+
+        # Radio buttons
+        self.antenna_switch_label = QtWidgets.QLabel("")
+        self.antenna_1 = QtWidgets.QRadioButton(ANTENNA_1_NAME)
+        self.antenna_2 = QtWidgets.QRadioButton(ANTENNA_2_NAME)
+
+        # Domyślne zaznaczenie (opcjonalnie)
+        self.antenna_1.setChecked(True)
+
+        # Dodajemy do layoutu
+        antenna_switch.addWidget(self.antenna_1)
+        antenna_switch.addWidget(self.antenna_2)
+
+        # Grupa przycisków (jednokrotny wybór)
+        self.antenna_switch_group = QtWidgets.QButtonGroup(self)
+        self.antenna_switch_group.addButton(self.antenna_1)
+        self.antenna_switch_group.addButton(self.antenna_2)
+
+        # Po zmianie wyboru wywołaj funkcję
+        self.antenna_switch_group.buttonClicked.connect(self.antenna_switch_changed)
+
         bottom_row = QtWidgets.QHBoxLayout()
         # bottom_row.addStretch()
         bottom_row.addWidget(self.swr_btn)
-        bottom_row.addSpacing(48)
+        bottom_row.addSpacing(12)
         bottom_row.addWidget(self.radio_width_label)
         bottom_row.addLayout(radio_width)
+        bottom_row.addSpacing(12)
+        bottom_row.addLayout(antenna_switch)
         bottom_row.addStretch()
         bottom_row.addWidget(self.tx_meter_label)
         bottom_row.addWidget(self.cmb_smeter)
@@ -755,10 +799,28 @@ class MainWindow(QtWidgets.QMainWindow):
         notch_layout = QtWidgets.QHBoxLayout(self.notch_group)
         notch_layout.addWidget(self.notch_slider)
 
+        # przycisk odtwarzania
+        self.play1_btn = QtWidgets.QPushButton('▶️ ' + REC1_PATH.split('/')[-1].replace('.wav', ''))
+        self.play1_btn.setFixedSize(78, 28)
+        self.play1_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.play1_btn.pressed.connect(self.play1_btn_pressed)
+
+        self.play2_btn = QtWidgets.QPushButton('▶️ ' + REC2_PATH.split('/')[-1].replace('.wav', ''))
+        self.play2_btn.setFixedSize(78, 28)
+        self.play2_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.play2_btn.pressed.connect(self.play2_btn_pressed)
+
+        # --- groupbox for player
+        self.player_group = QtWidgets.QGroupBox("Player")
+        player_layout = QtWidgets.QHBoxLayout(self.player_group)
+        player_layout.addWidget(self.play1_btn)
+        player_layout.addWidget(self.play2_btn)
+
         # --- dodanie do bottom_row_2
         bottom_row_2 = QtWidgets.QHBoxLayout()
         bottom_row_2.addWidget(shift_group)
         bottom_row_2.addWidget(self.notch_group)
+        bottom_row_2.addWidget(self.player_group)
         bottom_row_2.addStretch()
 
         # ---- root layout
@@ -801,7 +863,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tuner_status.singleClicked.connect(self.set_tuner)
         self.tuner_status.doubleClicked.connect(self.tuning_start)
         self.send_tx_signal.connect(self.tx_action)
+        self.send_fst_signal.connect(self.fst_action)
         self.tx_power_btn.clicked.connect(self.set_tx_power)
+        self.sound_finished.connect(self._on_sound_finished)
 
         self.client = RigctlClient(HOST, PORT, timeout=TCP_TIMEOUT)
 
@@ -812,7 +876,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Do it only for one time
                 if key == "SQ0":
                     self.ignore_next_data_cnt = self.ignore_next_data_cnt - 1
-                print('dupa')
+                # print('dupa')
                 return
             else:
                 self.ignore_next_data_switch = False
@@ -1065,25 +1129,12 @@ class MainWindow(QtWidgets.QMainWindow):
         return f"{swr:.1f}"
 
     def power_btn_clicked(self):
-        # QtWidgets.QMessageBox.information(self, "Info", "Przycisk został kliknięty!")
         if self.client.trx_power_status:
             cmd = f"\\set_powerstat 0"
-            # QtCore.QTimer.singleShot(1000, lambda: self.client.send(cmd))
         else:
             cmd = f"\\set_powerstat 1"
-            # self.worker.pause(5000)
-            self.pause_polling.emit(5000)
+            self.pause_polling.emit(3000)
         self.client.send(cmd)
-            # with socket.create_connection((HOST, DUMMY_PORT), timeout=TCP_TIMEOUT) as ss:
-            # try:
-            #     self.ss = socket.create_connection((HOST, DUMMY_PORT), timeout=TCP_TIMEOUT)
-            #     cmd = "PS1\n"
-            #     self.ss.settimeout(TCP_TIMEOUT)
-            #     self.ss.sendall(cmd.encode("ascii", errors="ignore"))
-            #     self.ss.close()
-            # except:
-            #     print("Connection error")
-            #     pass
 
     def att_btn_clicked(self):
         if self.att_val:
@@ -1308,15 +1359,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if val:
             cmd = f"T 1"
+            self.client.send(cmd)
             self.setWindowTitle("[TX] " + temp)
             self.centralWidget().setStyleSheet("background-color: orange;")
+            self.worker.poll_all()
+            self.tx_sent = 1
         else:
-            cmd = f"T 0"
             self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
-            self.pause_polling.emit(100)
-            QTimer.singleShot(50, self.disable_tx)
+            # Send disable tx with delay because of delay in mumble
+            QTimer.singleShot(TX_OFF_DELAY, self.disable_tx)
+            self.tx_sent = 0
 
-        self.client.send(cmd)
+    @QtCore.pyqtSlot(int)
+    def fst_action(self, val: int):
+        # print('elo')
+        if val:
+            self.swr_btn_pressed()
+        else:
+            self.swr_btn_released()
 
     def radio_width_changed(self):
         if self.radio_narrow.isChecked():
@@ -1329,6 +1389,15 @@ class MainWindow(QtWidgets.QMainWindow):
         cmd = f"M " + self.mode_label.text() + " " + str(self.radio_width)
         self.ignore_next_data()
         self.client.send(cmd)
+
+    def antenna_switch_changed(self):
+        if not self.tx_active:
+            if self.antenna_1.isChecked():
+                self.switch_antenna('1')
+            elif self.antenna_2.isChecked():
+                self.switch_antenna('2')
+        else:
+            print("Cannot change antenna when TX")
 
     def set_tx_power(self):
         dialog = SliderDialog(self, value=int(self.tx_power_btn.text().replace('W', '')))
@@ -1355,6 +1424,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.client.send(cmd)
         
         self.send_tx_signal.emit(1)
+        self.swr_btn.setStyleSheet("background-color: " + BUTTON_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
 
     def swr_btn_released(self):
         if "SWR" in self.swr_meter.text():
@@ -1365,53 +1435,111 @@ class MainWindow(QtWidgets.QMainWindow):
         # self.swr_btn.setText(f"SWR: {self.current_swr:1.1f}")
 
         self.send_tx_signal.emit(0)
+        self.swr_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
 
+        QTimer.singleShot(TX_OFF_DELAY + 20, self.stop_swr_check)
+
+    def stop_swr_check(self):
         cmd = f"M " + self.current_mode + " 0"
         self.client.send(cmd)
 
         cmd = f"L RFPOWER {int(self.current_power)/100:0.2f}"
         self.client.send(cmd)
 
-    def check_swr(self):
-        cmd = f"wEX04209;"
+    def play_sound(self, path, widget):
+        if self.tx_active or self.tx_sent:
+            self.send_tx_signal.emit(0)
+            cmd = f"U MON 0"
+            self.client.send(cmd)
+            stopSound()
+            widget.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        else:
+            cmd = f"U MON 1"
+            self.client.send(cmd)
+            self.send_tx_signal.emit(1)
+            widget.setStyleSheet("background-color: " + BUTTON_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        
+            # callback wykona się po zakończeniu odtwarzania
+            def on_finished():
+                self.sound_finished.emit(widget)
+
+            playSound(path, on_finished=on_finished)
+
+    def _on_sound_finished(self, widget):
+        self.send_tx_signal.emit(0)
+        widget.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        QTimer.singleShot(TX_OFF_DELAY + 20, self.disable_monitor)
+
+    def disable_monitor(self):
+        cmd = f"U MON 0"
         self.client.send(cmd)
+
+    def play1_btn_pressed(self):
+        self.play_sound(REC1_PATH, self.play1_btn)
+
+    def play2_btn_pressed(self):
+        self.play_sound(REC2_PATH, self.play2_btn)
 
     def closeEvent(self, event):
         self.thread.quit()
         self.thread.wait(1000)
         super().closeEvent(event)
 
+    def switch_antenna(self, cmd, host=HOST, port=ANTENNA_SWITCH_PORT):
+        """Wysyła komendę '1' lub '2' do serwera."""
+        try:
+            with socket.create_connection((host, port), timeout=1) as s:
+                s.sendall(cmd.encode("ascii", errors="ignore"))
+                response = s.recv(1024).decode('utf-8').strip()
+                print("Server response:", response)
+                self.status.showMessage(response)
+        except Exception as e:
+            print("Connection error:", e)
+
 def start_keyboard_listener(main_window):
+    pressed_keys = set()
     tx_pressed = False
+    fst_pressed = False
 
     def on_press(key):
-        nonlocal tx_pressed
-        # print(key.name)
-        # try:
-        #     if key.char == '\\' and not tx_pressed:
-        #         tx_pressed = True
-        #         main_window.send_tx_signal.emit(1)
-        # except AttributeError:
-        #     pass
+        nonlocal tx_pressed, fst_pressed
+
         try:
-            if key.name == PTT_KEY and not tx_pressed:
+            key_name = key.char.lower() if hasattr(key, 'char') and key.char else key.name
+            pressed_keys.add(key_name)
+            # print("Pressed:", pressed_keys)
+
+            # TX (np. Alt)
+            if PTT_KEY in pressed_keys and not tx_pressed:
                 tx_pressed = True
                 main_window.send_tx_signal.emit(1)
+
+            # FST combo (np. Shift + Q)
+            if FST_KEY_MOD in pressed_keys and FST_KEY in pressed_keys and not fst_pressed:
+                fst_pressed = True
+                main_window.send_fst_signal.emit(1)
+
         except AttributeError:
             pass
 
     def on_release(key):
-        nonlocal tx_pressed
-        # try:
-        #     if key.char == '\\':
-        #         tx_pressed = False
-        #         main_window.send_tx_signal.emit(0)
-        # except AttributeError:
-        #     pass
+        nonlocal tx_pressed, fst_pressed
+
         try:
-            if key.name == PTT_KEY:
+            key_name = key.char.lower() if hasattr(key, 'char') and key.char else key.name
+            if key_name in pressed_keys:
+                pressed_keys.remove(key_name)
+
+            # TX release
+            if PTT_KEY == key_name and tx_pressed:
                 tx_pressed = False
                 main_window.send_tx_signal.emit(0)
+
+            # FST combo release
+            if fst_pressed and (FST_KEY_MOD not in pressed_keys or FST_KEY not in pressed_keys):
+                fst_pressed = False
+                main_window.send_fst_signal.emit(0)
+
         except AttributeError:
             pass
 

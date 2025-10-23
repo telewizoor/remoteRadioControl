@@ -1,2 +1,5 @@
 pynput
 PyQt5
+sounddevice
+soundfile
+websocket
