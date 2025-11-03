@@ -3,3 +3,4 @@ PyQt5
 sounddevice
 soundfile
 websocket
+websocket-client

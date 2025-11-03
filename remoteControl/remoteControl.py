@@ -31,9 +31,9 @@ HOST = "192.168.152.12"
 PORT = 4532
 DUMMY_PORT = 4534
 ANTENNA_SWITCH_PORT = 5000
-ANTENNA_1_NAME = 'Hexbeam'
+ANTENNA_1_NAME = 'Hex'
 ANTENNA_1_CMD = '1'
-ANTENNA_2_NAME = 'Dipole'
+ANTENNA_2_NAME = 'Dpl'
 ANTENNA_2_CMD = '2'
 TCP_TIMEOUT = 0.1
 POLL_MS = 500
@@ -58,9 +58,18 @@ ALC_METER = 2
 PO_METER  = 3
 DEFAULT_TX_METER = SWR_METER
 
-RADIO_WIDTH_NARROW = 1800
-RADIO_WIDTH_NORMAL = 2400
-RADIO_WIDTH_WIDE   = 3000
+RADIO_WIDTH_SSB_NARROW = 1800
+RADIO_WIDTH_SSB_NORMAL = 2400
+RADIO_WIDTH_SSB_WIDE   = 3000
+
+SMALL_BTN_WIDTH  = 64
+SMALL_BTN_HEIGHT = 28
+
+BIG_KNOB_SIZE   = 70
+SMALL_KNOB_SIZE = 50
+KNOB_FONT_SIZE  = 10
+
+DEFAULT_NOISE_REDUCTION = 5
 
 cyclicRefreshParams = ['AG0', 'SQ0', 'RM0', 'RM1', 'RM4', 'RM5', 'RM6', 'PS', 'FA', 'FB', 'PC', 'AC', 'TX', 'RA0', 'PA0', 'VS', 'NB0', 'MD0', 'ML0', 'SH0', 'IS0', 'BP00']
 
@@ -148,17 +157,19 @@ class BigKnob(QtWidgets.QWidget):
 
         self.value_label = QtWidgets.QLabel("—")
         self.value_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.value_label.setFont(QtGui.QFont("Monospace", 10))
+        self.value_label.setFont(QtGui.QFont("Monospace", KNOB_FONT_SIZE))
 
         self.title_label = QtWidgets.QLabel(self.title)
         self.title_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.title_label.setStyleSheet("letter-spacing: 1px; font-weight: 600;")
+        self.title_label.setFont(QtGui.QFont("Monospace", KNOB_FONT_SIZE))
+        self.title_label.setStyleSheet("letter-spacing: 0px; font-weight: 600;")
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(self.title_label)
         layout.addWidget(self.dial, alignment=QtCore.Qt.AlignCenter)
+        layout.addStretch(1)
         if value_label_visible:
             layout.addWidget(self.value_label)
-        layout.addWidget(self.title_label)
 
         self.dial.installEventFilter(self)
 
@@ -374,15 +385,19 @@ class MainWindow(QtWidgets.QMainWindow):
     pause_polling = QtCore.pyqtSignal(int)
     resume_polling = QtCore.pyqtSignal()
     sound_finished = QtCore.pyqtSignal(object)
+    waterfall_freq = QtCore.pyqtSignal(int)
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Remote Control - FT‑450D")
-        self.windowWidth = 600
-        self.windowHeight = 550
-        self.setFixedSize(self.windowWidth, self.windowHeight) 
+        self.windowWidth = 560
+        self.windowHeight = 480
+        self.setFixedWidth( self.windowWidth )
+        # self.setFixedSize(self.windowWidth, self.windowHeight) 
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowIcon(QIcon("logo.ico"))
+
+        self.waterfall_window = None
 
         self.ignore_next_data_switch = False
         self.ignore_next_data_cnt = 2
@@ -394,16 +409,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tx_sent = 0
         self.tx_meter = DEFAULT_TX_METER
 
-        self.radio_width = RADIO_WIDTH_NORMAL
+        self.radio_width = RADIO_WIDTH_SSB_NORMAL
 
         # ---- top: power indicator + freq display
         self.power_indicator = QtWidgets.QLabel()
-        self.power_indicator.setFixedSize(28, 28)
+        self.power_indicator.setFixedSize(SMALL_BTN_HEIGHT, SMALL_BTN_HEIGHT)
         self.power_indicator.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; border: 1px solid black; border-radius: 14px;")
         self.power_indicator.setToolTip("Radio OFF")
 
         self.active_vfo_label = QtWidgets.QLabel()
-        self.active_vfo_label.setFixedSize(64, 28)
+        self.active_vfo_label.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.active_vfo_label.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border: 1px solid black; border-radius: 4px;")
         self.active_vfo_label.setAlignment(QtCore.Qt.AlignCenter)
         self.active_vfo_label.setFont(QtGui.QFont("Monospace", 10, QtGui.QFont.Bold))
@@ -412,7 +427,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # mode
         self.mode_label = QtWidgets.QLabel()
-        self.mode_label.setFixedSize(64, 28)
+        self.mode_label.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.mode_label.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border: 1px solid black; border-radius: 4px;")
         self.mode_label.setAlignment(QtCore.Qt.AlignCenter)
         self.mode_label.setFont(QtGui.QFont("Monospace", 10, QtGui.QFont.Bold))
@@ -429,25 +444,25 @@ class MainWindow(QtWidgets.QMainWindow):
         left_widget.setLayout(left_layout)
 
         self.att_btn = QtWidgets.QPushButton()
-        self.att_btn.setFixedSize(64, 28)
+        self.att_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.att_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px;")
         self.att_btn.setText("ATT")
         self.att_btn.clicked.connect(self.att_btn_clicked)
 
         self.ipo_btn = QtWidgets.QPushButton()
-        self.ipo_btn.setFixedSize(64, 28)
+        self.ipo_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.ipo_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px;")
         self.ipo_btn.setText("IPO")
         self.ipo_btn.clicked.connect(self.ipo_btn_clicked)
 
         self.tx_power_btn = QtWidgets.QPushButton()
-        self.tx_power_btn.setFixedSize(64, 28)
+        self.tx_power_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.tx_power_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.tx_power_btn.setText("-W")
 
         # główna częstotliwość
         self.freq_display = QtWidgets.QLabel("--- MHz")
-        self.freq_display.setFont(QtGui.QFont("Monospace", 16, QtGui.QFont.Bold))
+        self.freq_display.setFont(QtGui.QFont("Monospace", 14, QtGui.QFont.Bold))
         self.freq_display.setAlignment(QtCore.Qt.AlignCenter)
 
         # druga, mniejsza częstotliwość
@@ -467,7 +482,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         right_container = QtWidgets.QWidget()
         right_grid = QtWidgets.QGridLayout()
-        right_grid.setSpacing(4)
+        right_grid.setHorizontalSpacing(6)
+        right_grid.setVerticalSpacing(4)
         right_grid.setContentsMargins(0, 0, 0, 0)
         right_container.setLayout(right_grid)
 
@@ -478,19 +494,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # druga linia — na razie tylko NB pod pierwszym przyciskiem
         self.nb_btn = QtWidgets.QPushButton("NB")
-        self.nb_btn.setFixedSize(64, 28)
+        self.nb_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.nb_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.nb_btn.clicked.connect(self.nb_btn_clicked)
         self.nb_active = 0
 
         self.tuner_status = DoubleClickButton()
-        self.tuner_status.setFixedSize(64, 28)
+        self.tuner_status.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.tuner_status.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px;")
         self.tuner_status.setText("TUNER")
         self.tuner_status_val = 0
 
-        self.monitor_btn = QtWidgets.QPushButton("NB")
-        self.monitor_btn.setFixedSize(64, 28)
+        self.monitor_btn = QtWidgets.QPushButton("MONITOR")
+        self.monitor_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.monitor_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.monitor_btn.setText("MONITOR")
         self.monitor_btn.clicked.connect(self.monitor_btn_clicked)
@@ -502,35 +518,35 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Add waterfall button to your existing button layout
         self.waterfall_btn = QtWidgets.QPushButton("Waterfall")
-        self.waterfall_btn.setFixedSize(64, 28)
+        self.waterfall_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.waterfall_btn.setStyleSheet("background-color: lightblue; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.waterfall_btn.clicked.connect(self.show_waterfall)
 
         # Add to your right_grid layout (adjust position as needed)
-        # right_grid.addWidget(self.waterfall_btn, 1, 5)  # Adjust row/column as needed
+        right_grid.addWidget(self.waterfall_btn, 1, 5)  # Adjust row/column as needed
 
         # Initialize waterfall window
         self.waterfall_window = None
 
         # wstawienie do top_row: freq_widget zachowuje stretch, prawy kontener jest "przyklejony" z prawej
         top_row = QtWidgets.QHBoxLayout()
-        top_row.addWidget(self.power_indicator)
-        top_row.addSpacing(2)
+        # top_row.addWidget(self.power_indicator)
+        # top_row.addSpacing(2)
         top_row.addWidget(left_widget)
-        top_row.addSpacing(1)
+        top_row.addSpacing(4)
         top_row.addWidget(freq_widget, stretch=1)   # zajmuje środek
-        top_row.addSpacing(6)
+        top_row.addSpacing(4)
         top_row.addWidget(right_container)
 
         # ---- middle: knobs (FREQ big, then SQUELCH + VOLUME)
-        self.knob_fast_freq = BigKnob("Fast", size=80, value_label_visible=False)
+        self.knob_fast_freq = BigKnob("Fast", size=BIG_KNOB_SIZE, value_label_visible=False)
         self.knob_fast_freq.dial.setWrapping(True)
         self.knob_fast_freq.dial.setNotchesVisible(False)  # bo to ma być ciągłe
         self.knob_fast_freq.dial.setRange(0, 10)          # 0–100 kroków w kółko
         self.knob_fast_freq.dial.valueChanged.connect(self.fast_freq_step)
         self.last_fast_freq_pos = 0
 
-        self.knob_freq = BigKnob("Dial", size=80, value_label_visible=False)
+        self.knob_freq = BigKnob("Dial", size=BIG_KNOB_SIZE, value_label_visible=False)
         self.knob_freq.dial.setWrapping(True)
         self.knob_freq.dial.setNotchesVisible(False)  # bo to ma być ciągłe
         self.knob_freq.dial.setRange(0, 10)          # 0–100 kroków w kółko
@@ -538,12 +554,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_freq_pos = 0
         self.current_freq = 14074000  # Hz (odczyt z rigctld)
 
-        self.knob_squelch = BigKnob("Squelch", size=60)
+        self.knob_squelch = BigKnob("Squelch", size=SMALL_KNOB_SIZE)
         self.knob_squelch.dial.setNotchTarget(20.0)
         self.knob_squelch.dial.valueChanged.connect(self.squelch_change)
         self.last_squelch_pos = 0
         
-        self.knob_volume = BigKnob("Volume", size=60)
+        self.knob_volume = BigKnob("Volume", size=SMALL_KNOB_SIZE)
         self.knob_volume.dial.setNotchTarget(20.0)
         self.knob_volume.dial.valueChanged.connect(self.volume_change)
         self.last_volume_pos = 0
@@ -556,12 +572,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ---- bottom buttons: teraz w 2 rzędach
         btns_layout = QtWidgets.QVBoxLayout()
-        btns_layout.setSpacing(6)
+        # btns_layout.setSpacing(6)
         self.buttons = []
 
         # pierwszy rząd
         btn_row1 = QtWidgets.QHBoxLayout()
-        btn_row1.setSpacing(48)
+        # btn_row1.setSpacing(1)
 
         self.power_btn = QtWidgets.QPushButton("PWR")
         self.power_btn.setFixedSize(48, 48) 
@@ -601,23 +617,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.vfo_switch_btn.clicked.connect(self.vfo_switch_btn_clicked)
 
         btns_layout.addLayout(btn_row1)
-        btns_layout.addSpacing(1)
+        # btns_layout.addSpacing(1)
 
         # drugi rząd
         btn_row2 = QtWidgets.QHBoxLayout()
-        btn_row2.setSpacing(1)
+        # btn_row2.setSpacing(24)
+        btn_row2.addStretch(1)
 
         self.ipo_att_btn = QtWidgets.QPushButton("IPO\n/ATT")
         self.ipo_att_btn.setFixedSize(48, 48)
         self.ipo_att_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
-        btn_row2.addWidget(self.ipo_att_btn)
+        # btn_row1.addWidget(self.ipo_att_btn)
         self.buttons.append(self.ipo_att_btn)
         self.ipo_att_btn.clicked.connect(self.ipo_att_btn_clicked)
 
         self.split_btn = QtWidgets.QPushButton("SPLIT")
         self.split_btn.setFixedSize(48, 48)
         self.split_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
-        btn_row2.addWidget(self.split_btn)
+        btn_row1.addWidget(self.split_btn)
         self.buttons.append(self.split_btn)
         self.split_btn.clicked.connect(self.split_btn_clicked)
         self.split_active = 0
@@ -626,7 +643,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_down_btn = QtWidgets.QPushButton("MODE\n↓")
         self.mode_down_btn.setFixedSize(48, 48)
         self.mode_down_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
-        btn_row2.addWidget(self.mode_down_btn)
+        btn_row1.addWidget(self.mode_down_btn)
         self.buttons.append(self.mode_down_btn)
         self.mode_down_btn.clicked.connect(self.mode_down_btn_clicked)
 
@@ -634,11 +651,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_up_btn = QtWidgets.QPushButton("MODE\n↑")
         self.mode_up_btn.setFixedSize(48, 48)
         self.mode_up_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
-        btn_row2.addWidget(self.mode_up_btn)
+        btn_row1.addWidget(self.mode_up_btn)
         self.buttons.append(self.mode_up_btn)
         self.mode_up_btn.clicked.connect(self.mode_up_btn_clicked)
 
-        btns_layout.addLayout(btn_row2)
+        btn_row2.addStretch(1)
+        # btns_layout.addLayout(btn_row2)
 
         METERS_FONT_SIZE = 9
         METERS_FONT = QtGui.QFont("Courier New", METERS_FONT_SIZE, QtGui.QFont.Bold)
@@ -682,7 +700,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.swr_meter.setValue(0)
         self.swr_meter.setFormat(f"SWR: {'-':>5}")
 
-        self.tx_meter_label = QtWidgets.QLabel("TX meter:")
+        self.tx_meter_label = QtWidgets.QLabel("on TX:")
         self.cmb_smeter = QtWidgets.QComboBox()
         self.cmb_smeter.addItem('SWR')
         self.cmb_smeter.addItem('ALC')
@@ -691,7 +709,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_smeter.setFixedWidth(64)
 
         self.swr_btn = QtWidgets.QPushButton("Check SWR")
-        self.swr_btn.setFixedSize(78, 28)
+        self.swr_btn.setFixedSize(72, 28)
         self.swr_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.swr_btn.pressed.connect(self.swr_btn_pressed)
         self.swr_btn.released.connect(self.swr_btn_released)
@@ -748,10 +766,9 @@ class MainWindow(QtWidgets.QMainWindow):
         bottom_row = QtWidgets.QHBoxLayout()
         # bottom_row.addStretch()
         bottom_row.addWidget(self.swr_btn)
-        bottom_row.addSpacing(12)
         bottom_row.addWidget(self.radio_width_label)
         bottom_row.addLayout(radio_width)
-        bottom_row.addSpacing(12)
+        bottom_row.addStretch()
         bottom_row.addLayout(antenna_switch)
         bottom_row.addStretch()
         bottom_row.addWidget(self.tx_meter_label)
@@ -759,12 +776,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # --- slider
         self.shift_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.shift_slider.setFixedWidth(100)
+        self.shift_slider.setFixedWidth(80)
         self.shift_slider.setMinimum(-1000)
         self.shift_slider.setMaximum(1000)
         self.shift_slider.setSingleStep(101)
-        self.shift_slider.setPageStep(101)
-        self.shift_slider.setTickInterval(250)
+        self.shift_slider.setPageStep(201)
+        self.shift_slider.setTickInterval(200)
         self.shift_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
         self.shift_slider.setValue(0)
 
@@ -780,12 +797,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # --- slider
         self.notch_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.notch_slider.setFixedWidth(150)
+        self.notch_slider.setFixedWidth(80)
         self.notch_slider.setMinimum(0)
         self.notch_slider.setMaximum(4000)
-        self.notch_slider.setSingleStep(200)
-        self.notch_slider.setPageStep(200)
-        self.notch_slider.setTickInterval(250)
+        self.notch_slider.setSingleStep(100)
+        self.notch_slider.setPageStep(100)
+        self.notch_slider.setTickInterval(400)
         self.notch_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
         self.notch_slider.setValue(2000)
         self.notch_slider.valueChanged.connect(self.notch_slider_move)
@@ -799,14 +816,35 @@ class MainWindow(QtWidgets.QMainWindow):
         notch_layout = QtWidgets.QHBoxLayout(self.notch_group)
         notch_layout.addWidget(self.notch_slider)
 
+        # --- noise reduction slider
+        self.nr_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.nr_slider.setFixedWidth(80)
+        self.nr_slider.setMinimum(1)
+        self.nr_slider.setMaximum(11)
+        self.nr_slider.setSingleStep(1)
+        self.nr_slider.setPageStep(1)
+        self.nr_slider.setTickInterval(1)
+        self.nr_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.nr_slider.setValue(DEFAULT_NOISE_REDUCTION)
+        self.nr_slider.valueChanged.connect(self.nr_slider_move)
+
+        # --- groupbox dla slidera
+        self.nr_group = QtWidgets.QGroupBox("NR")
+        self.nr_group.setCheckable(True)
+        self.nr_group.setChecked(False)
+        self.nr_group.setFixedWidth(self.nr_slider.width() + 24)
+        self.nr_group.clicked.connect(self.nr_checked)
+        nr_layout = QtWidgets.QHBoxLayout(self.nr_group)
+        nr_layout.addWidget(self.nr_slider)
+
         # przycisk odtwarzania
-        self.play1_btn = QtWidgets.QPushButton('▶️ ' + REC1_PATH.split('/')[-1].replace('.wav', ''))
-        self.play1_btn.setFixedSize(78, 28)
+        self.play1_btn = QtWidgets.QPushButton('▶️ ' + REC1_PATH.split('/')[-1].replace('.wav', '')[0:5])
+        self.play1_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.play1_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.play1_btn.pressed.connect(self.play1_btn_pressed)
 
-        self.play2_btn = QtWidgets.QPushButton('▶️ ' + REC2_PATH.split('/')[-1].replace('.wav', ''))
-        self.play2_btn.setFixedSize(78, 28)
+        self.play2_btn = QtWidgets.QPushButton('▶️ ' + REC2_PATH.split('/')[-1].replace('.wav', '')[0:5])
+        self.play2_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.play2_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.play2_btn.pressed.connect(self.play2_btn_pressed)
 
@@ -820,6 +858,7 @@ class MainWindow(QtWidgets.QMainWindow):
         bottom_row_2 = QtWidgets.QHBoxLayout()
         bottom_row_2.addWidget(shift_group)
         bottom_row_2.addWidget(self.notch_group)
+        bottom_row_2.addWidget(self.nr_group)
         bottom_row_2.addWidget(self.player_group)
         bottom_row_2.addStretch()
 
@@ -921,6 +960,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not self.active_vfo:
                     self.set_frequency_label(self.freq_display, val)
                     self.current_freq = self.vfoa_freq
+                    self.waterfall_freq.emit(self.current_freq)
                     self.active_vfo_label.setText("VFO A")
                 else:
                     self.set_frequency_label(self.freq_display_sub, val)
@@ -930,6 +970,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if self.active_vfo:
                     self.set_frequency_label(self.freq_display, val)
                     self.current_freq = self.vfob_freq
+                    self.waterfall_freq.emit(self.current_freq)
                     self.active_vfo_label.setText("VFO B")
                 else:
                     self.set_frequency_label(self.freq_display_sub, val)
@@ -1014,13 +1055,13 @@ class MainWindow(QtWidgets.QMainWindow):
         elif key == "SH0":
             if val is not None:
                 if val <= 10:
-                    self.radio_width = RADIO_WIDTH_NARROW
+                    self.radio_width = RADIO_WIDTH_SSB_NARROW
                     self.radio_narrow.setChecked(True)
                 elif val > 10 and val <= 21:
-                    self.radio_width = RADIO_WIDTH_NORMAL
+                    self.radio_width = RADIO_WIDTH_SSB_NORMAL
                     self.radio_normal.setChecked(True)
                 elif val > 21 and val <= 31:
-                    self.radio_width = RADIO_WIDTH_WIDE
+                    self.radio_width = RADIO_WIDTH_SSB_WIDE
                     self.radio_wide.setChecked(True)
         elif key == "IS0":
             if val is not None:
@@ -1059,13 +1100,33 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ignore_next_data()
         self.client.send(cmd)
 
+    def nr_slider_move(self, value):
+        cmd = f"L NR " + str(value / 10)
+        self.client.send(cmd)
+
+    def nr_checked(self, value):
+        if value:
+            cmd = f"U NR 1"
+            self.client.send(cmd)
+            cmd = f"L NR " + str(self.nr_slider.value() / 10)
+        else:
+            cmd = f"U NR 0"
+        self.ignore_next_data()
+        self.client.send(cmd)
+
     def show_waterfall(self):
         """Show waterfall window"""
         if self.waterfall_window is None:
-            self.waterfall_window = WaterfallWindow(self)
-        
+            self.waterfall_window = WaterfallWindow()
+            self.waterfall_window.main_ref = self  # przekazujemy referencję do głównego okna
+            self.waterfall_window.freq_changed.connect(self.on_freq_from_waterfall)
+            self.waterfall_freq.connect(self.waterfall_window.on_freq_update)
         self.waterfall_window.show()
         self.waterfall_window.raise_()
+
+    def on_freq_from_waterfall(self, freq):
+        # print(f"Otrzymano częstotliwość z WaterfallWindow: {freq}")
+        self.frequency_change(freq)
 
     def set_frequency_label(self, label, freq):
         # label.setText(str(float(freq/1000000)).ljust(8, '0').zfill(8) + " MHz")
@@ -1241,10 +1302,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.current_freq += delta * FREQ_STEP_SLOW
 
-        cmd = f"F {self.current_freq}\n"
-        self.set_frequency_label(self.freq_display, self.current_freq)
-        self.ignore_next_data()
-        self.client.send(cmd)
+        self.frequency_change(self.current_freq)
     
     def fast_freq_step(self, new_pos: int):
         delta = new_pos - self.last_fast_freq_pos
@@ -1267,8 +1325,13 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.current_freq += delta * FREQ_STEP_FAST
 
-        cmd = f"F {self.current_freq}\n"
-        self.set_frequency_label(self.freq_display, self.current_freq)
+        self.frequency_change(self.current_freq)
+
+
+    def frequency_change(self, freq):
+        cmd = f"F {freq}\n"
+        self.set_frequency_label(self.freq_display, freq)
+        self.waterfall_freq.emit(freq)
         self.ignore_next_data()
         self.client.send(cmd)
 
@@ -1380,11 +1443,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def radio_width_changed(self):
         if self.radio_narrow.isChecked():
-            self.radio_width = RADIO_WIDTH_NARROW
+            self.radio_width = RADIO_WIDTH_SSB_NARROW
         elif self.radio_normal.isChecked():
-            self.radio_width = RADIO_WIDTH_NORMAL
+            self.radio_width = RADIO_WIDTH_SSB_NORMAL
         elif self.radio_wide.isChecked():
-            self.radio_width = RADIO_WIDTH_WIDE
+            self.radio_width = RADIO_WIDTH_SSB_WIDE
 
         cmd = f"M " + self.mode_label.text() + " " + str(self.radio_width)
         self.ignore_next_data()
