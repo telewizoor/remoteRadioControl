@@ -20,25 +20,25 @@ from PyQt5.QtCore import QTimer
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtGui import QIcon
 import os 
+
+import numpy as np
+import websocket
+import json
+
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
 from waterfallWindow import WaterfallWindow
 
-# U MON 1 <- Monitor
-
+### --- Configuration --- ###
+# Connection
 HOST = "192.168.152.12"
-# HOST = "192.168.152.2"
 PORT = 4532
-DUMMY_PORT = 4534
-ANTENNA_SWITCH_PORT = 5000
-ANTENNA_1_NAME = 'Hex'
-ANTENNA_1_CMD = '1'
-ANTENNA_2_NAME = 'Dpl'
-ANTENNA_2_CMD = '2'
 TCP_TIMEOUT = 0.1
 POLL_MS = 500
 SLOWER_POLL_MS = 2000
 MAX_RETRY_CNT = 3
+
+# Functional
 FREQ_STEP_SLOW = 100
 FREQ_STEP_FAST = 2500
 TX_OFF_DELAY = 300
@@ -46,21 +46,12 @@ PTT_KEY = 'ctrl_r'
 FST_KEY_MOD = 'shift'
 FST_KEY = 'w'
 
+# Graphics
+WINDOW_WIDTH_PERCENTAGE  = 80
+WINDOW_HEIGHT_PERCENTAGE = 20
 BUTTON_COLOR = "#FFDF85"
 NOT_ACTIVE_COLOR = "lightgray"
 ACTIVE_COLOR = "lightgreen"
-
-REC1_PATH = dir_path + '/recs/sp9pho_en.wav'
-REC2_PATH = dir_path + '/recs/cq_sp9pho.wav'
-
-SWR_METER = 1
-ALC_METER = 2
-PO_METER  = 3
-DEFAULT_TX_METER = SWR_METER
-
-RADIO_WIDTH_SSB_NARROW = 1800
-RADIO_WIDTH_SSB_NORMAL = 2400
-RADIO_WIDTH_SSB_WIDE   = 3000
 
 SMALL_BTN_WIDTH  = 64
 SMALL_BTN_HEIGHT = 28
@@ -69,7 +60,45 @@ BIG_KNOB_SIZE   = 70
 SMALL_KNOB_SIZE = 50
 KNOB_FONT_SIZE  = 10
 
+# Radio width
+FILTER_WIDTH_SSB_NARROW = 1800
+FILTER_WIDTH_SSB_NORMAL = 2400
+FILTER_WIDTH_SSB_WIDE   = 3000
+
+# Misc
+SWR_METER = 1
+ALC_METER = 2
+PO_METER  = 3
+DEFAULT_TX_METER = SWR_METER
+
 DEFAULT_NOISE_REDUCTION = 5
+
+REC1_PATH = dir_path + '/recs/sp9pho_en.wav'
+REC2_PATH = dir_path + '/recs/cq_sp9pho.wav'
+
+# Antenna switch
+ANTENNA_SWITCH_PORT = 5000
+ANTENNA_1_NAME = 'Hex'
+ANTENNA_1_CMD = '1'
+ANTENNA_2_NAME = 'Dpl'
+ANTENNA_2_CMD = '2'
+
+# Waterfall
+WS_URL = "ws://192.168.152.12:8073/ws/"
+DEFAULT_FFT_SIZE = 2048
+
+MOUSE_WHEEL_FREQ_STEP = 100
+
+WATERFALL_MARGIN   = 32
+MAJOR_THICK_HEIGHT = 12
+MINOR_TICK_HEIGHT  = 6
+MINOR_TICKS_PER_MAJOR = 10  # ile ticków pomiędzy głównymi (0 = brak)
+
+WF_THEME = [
+    0x000020, 0x000030, 0x000050, 0x000091, 0x1E90FF, 0xFFFFFF, 0xFFFF00,
+    0xFE6D16, 0xFF0000, 0xC60000, 0x9F0000, 0x750000, 0x4A0000
+]
+### --- End of configuration --- ###
 
 cyclicRefreshParams = ['AG0', 'SQ0', 'RM0', 'RM1', 'RM4', 'RM5', 'RM6', 'PS', 'FA', 'FB', 'PC', 'AC', 'TX', 'RA0', 'PA0', 'VS', 'NB0', 'MD0', 'ML0', 'SH0', 'IS0', 'BP00']
 
@@ -379,44 +408,525 @@ class DoubleClickButton(QtWidgets.QPushButton):
     def _emit_single(self):
         self.singleClicked.emit()
 
+
+def build_colormap(theme):
+    n_steps = 256
+    colors = np.array([[(c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF] for c in theme], dtype=np.float32)
+    segments = len(colors) - 1
+    steps_per_segment = n_steps // segments
+    palette = np.zeros((n_steps, 3), dtype=np.uint8)
+    idx = 0
+    for s in range(segments):
+        c0 = colors[s]
+        c1 = colors[s+1]
+        for i in range(steps_per_segment):
+            t = i / steps_per_segment
+            palette[idx] = (c0 + t * (c1 - c0)).astype(np.uint8)
+            idx += 1
+    while idx < n_steps:
+        palette[idx] = colors[-1].astype(np.uint8)
+        idx += 1
+    return palette
+
+PALETTE = build_colormap(WF_THEME)
+
+class ImaAdpcmCodec:
+    ima_index_table = [-1, -1, -1, -1, 2, 4, 6, 8,
+                       -1, -1, -1, -1, 2, 4, 6, 8]
+    ima_step_table = [7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,
+                      50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,253,279,307,
+                      337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,
+                      2272,2499,2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,
+                      15289,16818,18500,20350,22385,24623,27086,29794,32767]
+    def __init__(self):
+        self.reset()
+    def reset(self):
+        self.step_index = 0
+        self.predictor = 0
+        self.step = 0
+        self.synchronized = 0
+        self.sync_word = b"SYNC"
+        self.sync_counter = 0
+        self.phase = 0
+        self.sync_buffer = np.zeros(4, dtype=np.uint8)
+        self.sync_buffer_index = 0
+    def decode(self, data):
+        output = np.zeros(len(data) * 2, dtype=np.int16)
+        for i, byte in enumerate(data):
+            output[i*2] = self.decode_nibble(byte & 0x0F)
+            output[i*2+1] = self.decode_nibble((byte >> 4) & 0x0F)
+        return output
+    def decode_nibble(self, nibble):
+        self.step_index += ImaAdpcmCodec.ima_index_table[nibble]
+        self.step_index = max(0, min(self.step_index, 88))
+        diff = self.step >> 3
+        if nibble & 1: diff += self.step >> 2
+        if nibble & 2: diff += self.step >> 1
+        if nibble & 4: diff += self.step
+        if nibble & 8: diff = -diff
+        self.predictor += diff
+        self.predictor = max(-32768, min(self.predictor, 32767))
+        self.step = ImaAdpcmCodec.ima_step_table[self.step_index]
+        return self.predictor
+    
+def draw_line(data: np.ndarray, palette: np.ndarray, min_db=-120.0, max_db=-30.0, offset=0.0) -> np.ndarray:
+    data_offset = data + offset
+    norm = np.clip((data_offset - min_db) / (max_db - min_db), 0.0, 1.0)
+    indices = (norm * (len(palette) - 1)).astype(np.int32)
+    rgb_row = palette[indices]
+    return rgb_row
+
+class WaterfallWidget(QtWidgets.QWidget):
+    freq_clicked = QtCore.pyqtSignal(int)   # emitowane kiedy użytkownik kliknie/wybiera freq
+    freq_hover = QtCore.pyqtSignal(int)     # emitowane kiedy porusza myszką (pozycja)
+    freq_selected = QtCore.pyqtSignal(int)     # emitowane kiedy porusza myszką (pozycja)
+
+    def __init__(self, width=800, height=200, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Waterfall view")
+        self.width_px = width
+        self.height_px = height
+        self.setMinimumSize(400, height)
+
+        # QImage jako bufor tylko do wyświetlania; trzymamy też _buffer (numpy) żeby bezpiecznie modyfikować
+        self._image = QtGui.QImage(self.width_px, self.height_px, QtGui.QImage.Format_RGB888)
+        self._image.fill(QtGui.QColor('black'))
+        self._buffer = np.zeros((self.height_px, self.width_px, 3), dtype=np.uint8)
+        self.setMouseTracking(True)
+
+        self._lock = threading.Lock()
+        self.min_db = -90.0
+        self.max_db = -60.0
+
+        # paleta
+        self.palette = PALETTE.copy()
+
+        # zoom/pan
+        self.zoom_factor = 1.0  # 1.0 = full width (no zoom)
+        self.center_pos = 0.5   # 0..1 position in full FFT
+        self._dragging = False
+        self._last_x = 0
+
+        # selekcja / hover
+        self.selected_freq = None
+        self.hover_freq = 14250000
+        self._press_x = None
+        self._press_y = None
+
+        # częstotliwości - będą aktualizowane z WsReceiver
+        self.samp_rate = 1000000
+        self.center_freq = 14250000
+        self.selected_freq = self.center_freq
+
+    def set_min_db(self, value):
+        self.min_db = float(value)
+
+    def set_max_db(self, value):
+        self.max_db = float(value)
+
+    def _x_to_freq(self, x):
+        vis_start, vis_end = self._visible_freq_range()
+        # ogranicz x do widocznego obszaru widgetu
+        x = max(0, min(self.width_px - 1, x))
+        frac = x / max(1.0, (self.width_px - 1))
+        return int(vis_start + frac * (vis_end - vis_start))
+
+    @QtCore.pyqtSlot(dict)
+    def update_config(self, cfg):
+        # oczekujemy kluczy: samp_rate, center_freq (opcjonalnie start_freq)
+        if 'samp_rate' in cfg:
+            self.samp_rate = float(cfg['samp_rate'])
+        if 'center_freq' in cfg:
+            self.center_freq = float(cfg['center_freq'])
+        # redraw labels
+        self.update()
+
+    @QtCore.pyqtSlot(int)
+    def update_selected_freq(self, freq):
+        self.selected_freq = freq
+
+    def resizeEvent(self, event):
+        """Reaguje na zmianę rozmiaru okna."""
+        new_size = event.size()
+        self.width_px = new_size.width()
+        self.height_px = new_size.height()
+
+        # utwórz nowy QImage i bufor numpy dopasowany do nowego rozmiaru
+        self._image = QtGui.QImage(self.width_px, self.height_px, QtGui.QImage.Format_RGB888)
+        self._image.fill(QtGui.QColor('black'))
+
+        with self._lock:
+            self._buffer = np.zeros((self.height_px, self.width_px, 3), dtype=np.uint8)
+
+        # możesz opcjonalnie odświeżyć widok
+        self.update()
+
+        # wywołaj oryginalne zachowanie (dobre praktyki)
+        super().resizeEvent(event)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+
+        if event.modifiers() & QtCore.Qt.ControlModifier or self._dragging:
+            # pozycja kursora (x w pikselach)
+            mouse_x = event.x()
+
+            # częstotliwość pod kursorem PRZED zoomem
+            freq_before = self._x_to_freq(mouse_x)
+
+            # modyfikacja zoomu
+            if delta > 0:
+                self.zoom_factor *= 0.8
+            else:
+                self.zoom_factor *= 1.2
+
+            # ograniczenia zoomu
+            self.zoom_factor = max(0.05, min(1.0, self.zoom_factor))
+
+            # częstotliwość pod kursorem PO zoomie
+            freq_after = self._x_to_freq(mouse_x)
+
+            # zmiana środka widoku, aby utrzymać tę samą częstotliwość pod kursorem
+            if hasattr(self, "samp_rate") and self.samp_rate > 0:
+                full_start = self.center_freq - (self.samp_rate / 2.0)
+                full_bw = self.samp_rate
+                # różnica między freq_before i freq_after w jednostkach [0..1]
+                delta_norm = (freq_before - freq_after) / full_bw
+                self.center_pos = np.clip(self.center_pos + delta_norm, 0.0, 1.0)
+
+            self.update()
+            event.accept()
+
+        else:
+            # przewijanie bez Ctrl — zmiana częstotliwości
+            if delta > 0:
+                delta = 1
+            elif delta < 0:
+                delta = -1
+
+            self.selected_freq -= self.selected_freq % MOUSE_WHEEL_FREQ_STEP
+            self.selected_freq += delta * MOUSE_WHEEL_FREQ_STEP
+            self.freq_clicked.emit(self.selected_freq)
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self._dragging = True
+            self._last_x = event.x()
+            self._press_x = event.x()
+            self._press_y = event.y()
+
+    def mouseMoveEvent(self, event):
+        # hover — zawsze aktualizujemy częstotliwość i odświeżamy natychmiast
+        freq = int(self._x_to_freq(event.x()))
+        if freq != self.hover_freq:
+            self.hover_freq = freq
+            self.freq_hover.emit(freq)
+            self.update()
+
+        # jeśli przeciągamy - zachowaj obecne panning
+        if self._dragging:
+            dx = event.x() - self._last_x
+            self._last_x = event.x()
+            move = -dx / max(1.0, self.width_px) * (1.0)
+            self.center_pos = np.clip(self.center_pos + move * self.zoom_factor, 0.0, 1.0)
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        # jeśli był to krótki klik (prawie bez ruchu) - traktujemy jako wybór częstotliwości
+        self._dragging = False
+        if self._press_x is not None:
+            dx = abs(event.x() - self._press_x)
+            dy = abs(event.y() - self._press_y)
+            if dx < 4 and dy < 4:  # threshold dla kliknięcia
+                freq = int(self._x_to_freq(event.x()))
+                self.selected_freq = freq
+                self.freq_clicked.emit(freq)
+                self.update()
+        self._press_x = None
+        self._press_y = None
+
+    def _visible_freq_range(self):
+        """Zwraca (visible_start_freq, visible_end_freq) na podstawie samp_rate, center_freq, zoom_factor i center_pos."""
+        full_start = self.center_freq - (self.samp_rate / 2.0)
+        full_bw = self.samp_rate
+        vis_bw = full_bw * self.zoom_factor
+        # center_pos określa pozycję środka widoku względem pełnego pasma [0..1]
+        center_abs = full_start + self.center_pos * full_bw
+        vis_start = center_abs - vis_bw / 2.0
+        vis_end = vis_start + vis_bw
+        # zabezpieczenie granic: trzymamy w obrębie pełnego pasma
+        if vis_start < full_start:
+            vis_start = full_start
+            vis_end = vis_start + vis_bw
+        if vis_end > full_start + full_bw:
+            vis_end = full_start + full_bw
+            vis_start = vis_end - vis_bw
+        return vis_start, vis_end
+
+    @QtCore.pyqtSlot(np.ndarray)
+    def push_row(self, fft_row):
+        # zoom: wybieramy wycinek
+        n = len(fft_row)
+        visible_n = max(2, int(n * self.zoom_factor))
+        center = int(self.center_pos * n)
+        start = max(0, center - visible_n // 2)
+        end = min(n, start + visible_n)
+        if end - start < visible_n:
+            start = max(0, end - visible_n)
+        fft_visible = fft_row[start:end]
+
+        # skaluj do szerokości widgetu
+        if fft_visible.size != self.width_px:
+            fft_visible = np.interp(np.linspace(0, len(fft_visible) - 1, self.width_px),
+                                    np.arange(len(fft_visible)),
+                                    fft_visible)
+
+        rgb_row = draw_line(fft_visible, self.palette, self.min_db, self.max_db)
+
+        with self._lock:
+            # operuj na naszym bezpiecznym bufferze numpy
+            self._buffer[1+WATERFALL_MARGIN:] = self._buffer[WATERFALL_MARGIN:-1]
+            self._buffer[WATERFALL_MARGIN] = rgb_row
+
+            # skopiuj do QImage (uwzględnia bytesPerLine)
+            ptr = self._image.bits()
+            ptr.setsize(self._image.byteCount())
+            bytes_per_line = self._image.bytesPerLine()
+            arr2d = np.frombuffer(ptr, dtype=np.uint8).reshape((self.height_px, bytes_per_line))
+            # skopiuj tylko treść RGB (bez paddingu)
+            rgb_view = arr2d[:, :self.width_px * 3].reshape((self.height_px, self.width_px, 3))
+            rgb_view[:, :] = self._buffer[:, :]
+
+        # poproś o ponowne narysowanie
+        self.update()
+
+    def _format_freq(self, hz):
+        #  formatowanie częstotliwości  -> Hz, kHz, MHz
+        if abs(hz) >= 1e6:
+            return f"{hz/1e6:.2f} MHz"
+        if abs(hz) >= 1e3:
+            return f"{hz/1e3:.1f} kHz"
+        return f"{int(hz)} Hz"
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        # narysuj obraz
+        with self._lock:
+            painter.drawImage(self.rect(), self._image, self._image.rect())
+
+            # --- rysowanie skali częstotliwości (napisy co 0.1 MHz + ticki pośrednie)
+            vis_start, vis_end = self._visible_freq_range()
+            bw = vis_end - vis_start
+
+            painter.setPen(QtGui.QPen(QtGui.QColor("#ffd000"), 1))
+            font = painter.font()
+            font.setPointSize(10)
+            painter.setFont(font)
+            metrics = painter.fontMetrics()
+
+            # główne ticki co 0.1 MHz
+            start_mhz = vis_start / 1e6
+            end_mhz = vis_end / 1e6
+            start_tick = np.floor(start_mhz * 10) / 10
+            end_tick = np.ceil(end_mhz * 10) / 10
+
+            tick = start_tick
+            while tick <= end_tick + 1e-9:
+                freq_hz = tick * 1e6
+                if vis_start <= freq_hz <= vis_end:
+                    x = int((freq_hz - vis_start) / bw * (self.width_px - 1))
+                    # główny tick + napis
+                    painter.drawLine(x, WATERFALL_MARGIN - MAJOR_THICK_HEIGHT, x, WATERFALL_MARGIN)
+                    text = f"{tick:.2f}"
+                    tw = metrics.horizontalAdvance(text)
+                    tx = max(2, x - tw // 2)
+                    painter.drawText(tx, 16, text)
+
+                    # ticki pośrednie
+                    if MINOR_TICKS_PER_MAJOR > 0:
+                        step = 0.1 / MINOR_TICKS_PER_MAJOR
+                        for i in range(1, MINOR_TICKS_PER_MAJOR):
+                            sub_tick = tick + i * step
+                            sub_freq_hz = sub_tick * 1e6
+                            if sub_freq_hz >= vis_end:
+                                break
+                            x_sub = int((sub_freq_hz - vis_start) / bw * (self.width_px - 1))
+                            painter.drawLine(x_sub, WATERFALL_MARGIN - MINOR_TICK_HEIGHT, x_sub, WATERFALL_MARGIN)
+                tick += 0.05
+
+
+            # narysuj ramkę i aktualne wartości min/max dB w rogu
+            overlay_y = self.height_px - 92
+            painter.setPen(QtGui.QPen(QtGui.QColor(180,180,180), 1))
+            # painter.drawRect(0, 0, self.width_px-1, self.height_px-1)
+
+            # min/max dB | hover freq overlay
+            painter.fillRect(4, overlay_y + 22, 120, 52, QtGui.QColor(60,60,60,150))
+            painter.setPen(QtGui.QPen(QtGui.QColor(255,255,255), 1))
+            painter.drawText(8, overlay_y + 38, f"Min dB: {self.min_db:.0f}")
+            painter.drawText(8, overlay_y + 54, f"Max dB: {self.max_db:.0f}")
+            painter.drawText(8, overlay_y + 54 + 16, f"{self.hover_freq/1000000:.3f}")
+
+            # --- rysowanie pionowych linii: selected (żółta) i hover (cyjan)
+            # mapowanie freq -> x
+            vis_start, vis_end = self._visible_freq_range()
+            bw = max(1e-9, (vis_end - vis_start))
+            if self.selected_freq is not None:
+                if vis_start <= self.selected_freq <= vis_end:
+                    x_sel = int((self.selected_freq - vis_start) / bw * (self.width_px - 1))
+                    pen_sel = QtGui.QPen(QtGui.QColor(255, 255, 0, 220), 2)  # żółta
+                    painter.setPen(pen_sel)
+                    painter.drawLine(x_sel, 0, x_sel, self.height_px)
+                    # draw frequency label
+                    painter.fillRect(x_sel, x_sel + 100, self.height_px - 2, self.height_px + 12, QtGui.QColor(60,60,60,150))
+                    painter.drawText(x_sel, self.height_px - 2, f"{self.selected_freq/1000000:.4f}")
+            if self.hover_freq is not None:
+                if vis_start <= self.hover_freq <= vis_end:
+                    x_h = int((self.hover_freq - vis_start) / bw * (self.width_px - 1))
+                    pen_h = QtGui.QPen(QtGui.QColor(0, 255, 255, 180), 1)   # cyjan
+                    painter.setPen(pen_h)
+                    painter.drawLine(x_h, 0, x_h, self.height_px)
+                    painter.drawText(x_h, self.height_px - 12, f"{self.hover_freq/1000000:.4f}")
+
+class WsReceiver(threading.Thread, QtCore.QObject):
+    push_row_signal = QtCore.pyqtSignal(object)
+    config_signal = QtCore.pyqtSignal(dict)
+
+    def __init__(self, ws_url, fft_size=DEFAULT_FFT_SIZE):
+        threading.Thread.__init__(self, daemon=True)
+        QtCore.QObject.__init__(self)
+        self.ws_url = ws_url
+        self.fft_size = fft_size
+        self.fft_codec = ImaAdpcmCodec()
+        self._stop_event = threading.Event()
+        self._ws = None
+        self.samp_rate = 1000000
+        self.center_freq = 14250000
+
+    def stop(self):
+        self._stop_event.set()
+        try:
+            if self._ws:
+                self._ws.close()
+        except Exception:
+            pass
+
+    def send_set_frequency(self, frequency):
+        low_freq = self.center_freq - self.samp_rate / 2
+        high_freq = self.center_freq + self.samp_rate / 2
+        # Change SDR frequency when current frequency is outside bandwith
+        if frequency > high_freq or frequency < low_freq:
+            print('Changing SDR frequency...')
+            try:
+                if self._ws and hasattr(self._ws, "send"):
+                    cmd = '{"type":"setfrequency","params":{"frequency":' + str(int(frequency)) + '}}'
+                    self._ws.send(cmd)
+                else:
+                    print("WsReceiver: no active ws to send setfrequency")
+            except Exception as e:
+                print("WsReceiver: failed to send setfrequency:", e)
+
+    def run(self):
+        HEADER_SIZE = 6
+        COMPRESS_FFT_PAD_N = 16
+
+        def on_message(ws, message):
+            if isinstance(message, str):
+                try:
+                    json_msg = json.loads(message)
+                except Exception:
+                    return
+                # jeśli to wiadomość config -> wyemituj
+                if 'type' in json_msg and 'config' in json_msg['type']:
+                    val = json_msg.get('value', {})
+                    cfg = {}
+                    if 'fft_size' in val:
+                        self.fft_size = val['fft_size']
+                        self.fft_size = 2048
+                        cfg['fft_size'] = self.fft_size
+                    if 'samp_rate' in val:
+                        self.samp_rate = val['samp_rate']
+                        cfg['samp_rate'] = self.samp_rate
+                    if 'center_freq' in val:
+                        self.center_freq = val['center_freq']
+                        # print(self.center_freq)
+                        cfg['center_freq'] = self.center_freq
+                    if cfg:
+                        # emitujemy konfigurację do UI
+                        self.config_signal.emit(cfg)
+                return
+
+            data = message
+            if len(data) < HEADER_SIZE:
+                return
+            frame_type = data[0]
+            payload = data[HEADER_SIZE:]
+            if frame_type == 1:
+                # if len(payload) == self.fft_size:
+                    # dekodowanie (przyjmujemy waterfall_i16 -> dB style)
+                self.fft_codec.reset()
+                waterfall_i16 = self.fft_codec.decode(data)
+                waterfall_f32 = []
+                for i in range(len(waterfall_i16) - COMPRESS_FFT_PAD_N):
+                    waterfall_f32.append(waterfall_i16[i + COMPRESS_FFT_PAD_N] / 100.0)
+                self.push_row_signal.emit(np.array(waterfall_f32, dtype=np.float32))
+
+        def on_error(ws, error):
+            print("WS error:", error)
+
+        def on_close(ws, code, msg):
+            print("WS closed", code, msg)
+
+        def on_open(ws):
+            ws.send('SERVER DE CLIENT client=openwebrx.js type=receiver')
+
+        while not self._stop_event.is_set():
+            try:
+                self._ws = websocket.WebSocketApp(self.ws_url,
+                                                  on_message=on_message,
+                                                  on_error=on_error,
+                                                  on_close=on_close,
+                                                  on_open=on_open)
+                self._ws.run_forever(ping_interval=20, ping_timeout=5)
+            except Exception as e:
+                print("WsReceiver exception:", e)
+            if not self._stop_event.is_set():
+                import time
+                time.sleep(1)
+
 class MainWindow(QtWidgets.QMainWindow):
     send_tx_signal = QtCore.pyqtSignal(int)
     send_fst_signal = QtCore.pyqtSignal(int)
     pause_polling = QtCore.pyqtSignal(int)
     resume_polling = QtCore.pyqtSignal()
     sound_finished = QtCore.pyqtSignal(object)
-    waterfall_freq = QtCore.pyqtSignal(int)
+    waterfall_freq_update = QtCore.pyqtSignal(int)
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Remote Control - FT‑450D")
-        self.windowWidth = 560
-        self.windowHeight = 480
-        self.setFixedWidth( self.windowWidth )
-        # self.setFixedSize(self.windowWidth, self.windowHeight) 
+
+        sizeObject = QtWidgets.QDesktopWidget().availableGeometry(-1)
+        windowWidth = int(WINDOW_WIDTH_PERCENTAGE / 100 * sizeObject.width())
+        windowHeight = int(WINDOW_HEIGHT_PERCENTAGE / 100 * sizeObject.height())
+        self.setGeometry(10, sizeObject.height() - 2*windowHeight, windowWidth, windowHeight)
+
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowIcon(QIcon("logo.ico"))
 
-        self.waterfall_window = None
-
         self.ignore_next_data_switch = False
         self.ignore_next_data_cnt = 2
-
-        central = QtWidgets.QWidget()
-        self.setCentralWidget(central)
 
         self.tx_active = 0
         self.tx_sent = 0
         self.tx_meter = DEFAULT_TX_METER
 
-        self.radio_width = RADIO_WIDTH_SSB_NORMAL
+        self.filter_width = FILTER_WIDTH_SSB_NORMAL
 
-        # ---- top: power indicator + freq display
-        self.power_indicator = QtWidgets.QLabel()
-        self.power_indicator.setFixedSize(SMALL_BTN_HEIGHT, SMALL_BTN_HEIGHT)
-        self.power_indicator.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; border: 1px solid black; border-radius: 14px;")
-        self.power_indicator.setToolTip("Radio OFF")
+        central = QtWidgets.QWidget()
+        self.setCentralWidget(central)
 
+        # active vfo
         self.active_vfo_label = QtWidgets.QLabel()
         self.active_vfo_label.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.active_vfo_label.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border: 1px solid black; border-radius: 4px;")
@@ -464,6 +974,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.freq_display = QtWidgets.QLabel("--- MHz")
         self.freq_display.setFont(QtGui.QFont("Monospace", 14, QtGui.QFont.Bold))
         self.freq_display.setAlignment(QtCore.Qt.AlignCenter)
+        self.set_frequency_label(self.freq_display, 0)
 
         # druga, mniejsza częstotliwość
         self.freq_display_sub = QtWidgets.QLabel("--- kHz")
@@ -490,7 +1001,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # pierwsza (istniejąca) linia przycisków
         right_grid.addWidget(self.att_btn,       0, 0)
         right_grid.addWidget(self.ipo_btn,       0, 1)
-        right_grid.addWidget(self.tx_power_btn,  0, 3)
+        right_grid.addWidget(self.tx_power_btn,  0, 2)
 
         # druga linia — na razie tylko NB pod pierwszym przyciskiem
         self.nb_btn = QtWidgets.QPushButton("NB")
@@ -514,29 +1025,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         right_grid.addWidget(self.nb_btn, 1, 0)
         right_grid.addWidget(self.tuner_status, 1, 1)
-        right_grid.addWidget(self.monitor_btn, 1, 3)
+        right_grid.addWidget(self.monitor_btn, 1, 2)
 
-        # Add waterfall button to your existing button layout
-        self.waterfall_btn = QtWidgets.QPushButton("Waterfall")
-        self.waterfall_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
-        self.waterfall_btn.setStyleSheet("background-color: lightblue; text-align: center; border-radius: 4px; border: 1px solid black;")
-        self.waterfall_btn.clicked.connect(self.show_waterfall)
+        self.swr_btn = QtWidgets.QPushButton("SWR")
+        self.swr_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
+        self.swr_btn.setStyleSheet("background-color: " + "#e1a100" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.swr_btn.pressed.connect(self.swr_btn_pressed)
+        self.swr_btn.released.connect(self.swr_btn_released)
 
-        # Add to your right_grid layout (adjust position as needed)
-        right_grid.addWidget(self.waterfall_btn, 1, 5)  # Adjust row/column as needed
-
-        # Initialize waterfall window
-        self.waterfall_window = None
-
-        # wstawienie do top_row: freq_widget zachowuje stretch, prawy kontener jest "przyklejony" z prawej
-        top_row = QtWidgets.QHBoxLayout()
-        # top_row.addWidget(self.power_indicator)
-        # top_row.addSpacing(2)
-        top_row.addWidget(left_widget)
-        top_row.addSpacing(4)
-        top_row.addWidget(freq_widget, stretch=1)   # zajmuje środek
-        top_row.addSpacing(4)
-        top_row.addWidget(right_container)
+        right_grid.addWidget(self.swr_btn, 2, 0)
 
         # ---- middle: knobs (FREQ big, then SQUELCH + VOLUME)
         self.knob_fast_freq = BigKnob("Fast", size=BIG_KNOB_SIZE, value_label_visible=False)
@@ -572,28 +1069,28 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ---- bottom buttons: teraz w 2 rzędach
         btns_layout = QtWidgets.QVBoxLayout()
-        # btns_layout.setSpacing(6)
         self.buttons = []
 
         # pierwszy rząd
         btn_row1 = QtWidgets.QHBoxLayout()
-        # btn_row1.setSpacing(1)
+
+        # drugi rząd
+        btn_row2 = QtWidgets.QHBoxLayout()
 
         self.power_btn = QtWidgets.QPushButton("PWR")
         self.power_btn.setFixedSize(48, 48) 
         self.power_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
         self.power_btn.setText("ON")
-        self.power_indicator.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; border-radius: 14px; border: 1px solid black;")
-        self.power_indicator.setToolTip("Radio OFF")
         btn_row1.addWidget(self.power_btn)
         self.buttons.append(self.power_btn)
 
-        self.band_down_btn = QtWidgets.QPushButton("BAND\n↓")
-        self.band_down_btn.setFixedSize(48, 48)
-        self.band_down_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
-        btn_row1.addWidget(self.band_down_btn)
-        self.buttons.append(self.band_down_btn)
-        self.band_down_btn.clicked.connect(self.band_down_btn_clicked)
+        self.split_btn = QtWidgets.QPushButton("SPLIT")
+        self.split_btn.setFixedSize(48, 48)
+        self.split_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
+        btn_row2.addWidget(self.split_btn)
+        self.buttons.append(self.split_btn)
+        self.split_btn.clicked.connect(self.split_btn_clicked)
+        self.split_active = 0
 
         self.band_up_btn = QtWidgets.QPushButton("BAND\n↑")
         self.band_up_btn.setFixedSize(48, 48)
@@ -601,6 +1098,13 @@ class MainWindow(QtWidgets.QMainWindow):
         btn_row1.addWidget(self.band_up_btn)
         self.buttons.append(self.band_up_btn)
         self.band_up_btn.clicked.connect(self.band_up_btn_clicked)
+
+        self.band_down_btn = QtWidgets.QPushButton("BAND\n↓")
+        self.band_down_btn.setFixedSize(48, 48)
+        self.band_down_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
+        btn_row2.addWidget(self.band_down_btn)
+        self.buttons.append(self.band_down_btn)
+        self.band_down_btn.clicked.connect(self.band_down_btn_clicked)
 
         self.a_eq_b_btn = QtWidgets.QPushButton("A = B")
         self.a_eq_b_btn.setFixedSize(48, 48)
@@ -612,17 +1116,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.vfo_switch_btn = QtWidgets.QPushButton("A / B")
         self.vfo_switch_btn.setFixedSize(48, 48)
         self.vfo_switch_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
-        btn_row1.addWidget(self.vfo_switch_btn)
+        btn_row2.addWidget(self.vfo_switch_btn)
         self.buttons.append(self.vfo_switch_btn)
         self.vfo_switch_btn.clicked.connect(self.vfo_switch_btn_clicked)
-
-        btns_layout.addLayout(btn_row1)
-        # btns_layout.addSpacing(1)
-
-        # drugi rząd
-        btn_row2 = QtWidgets.QHBoxLayout()
-        # btn_row2.setSpacing(24)
-        btn_row2.addStretch(1)
 
         self.ipo_att_btn = QtWidgets.QPushButton("IPO\n/ATT")
         self.ipo_att_btn.setFixedSize(48, 48)
@@ -630,22 +1126,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # btn_row1.addWidget(self.ipo_att_btn)
         self.buttons.append(self.ipo_att_btn)
         self.ipo_att_btn.clicked.connect(self.ipo_att_btn_clicked)
-
-        self.split_btn = QtWidgets.QPushButton("SPLIT")
-        self.split_btn.setFixedSize(48, 48)
-        self.split_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
-        btn_row1.addWidget(self.split_btn)
-        self.buttons.append(self.split_btn)
-        self.split_btn.clicked.connect(self.split_btn_clicked)
-        self.split_active = 0
-
-        # MODE ↓
-        self.mode_down_btn = QtWidgets.QPushButton("MODE\n↓")
-        self.mode_down_btn.setFixedSize(48, 48)
-        self.mode_down_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
-        btn_row1.addWidget(self.mode_down_btn)
-        self.buttons.append(self.mode_down_btn)
-        self.mode_down_btn.clicked.connect(self.mode_down_btn_clicked)
 
         # MODE ↑
         self.mode_up_btn = QtWidgets.QPushButton("MODE\n↑")
@@ -655,20 +1135,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.buttons.append(self.mode_up_btn)
         self.mode_up_btn.clicked.connect(self.mode_up_btn_clicked)
 
-        btn_row2.addStretch(1)
-        # btns_layout.addLayout(btn_row2)
+        # MODE ↓
+        self.mode_down_btn = QtWidgets.QPushButton("MODE\n↓")
+        self.mode_down_btn.setFixedSize(48, 48)
+        self.mode_down_btn.setStyleSheet("border-radius: 24px; background-color: lightgray; border: 1px solid black;")
+        btn_row2.addWidget(self.mode_down_btn)
+        self.buttons.append(self.mode_down_btn)
+        self.mode_down_btn.clicked.connect(self.mode_down_btn_clicked)
+
+        btns_layout.addLayout(btn_row1)
+        btns_layout.addLayout(btn_row2)
 
         METERS_FONT_SIZE = 9
         METERS_FONT = QtGui.QFont("Courier New", METERS_FONT_SIZE, QtGui.QFont.Bold)
         METERS_HEIGHT = 16
-        METERS_SPACING = 4
-        METERS_WIDTH = self.windowWidth - 30
+        METERS_WIDTH = self.width() - 30
 
         # ---- S-meter
         self.s_meter = QtWidgets.QProgressBar()
         self.s_meter.setRange(0, 255)
         self.s_meter.setFixedHeight(METERS_HEIGHT)
-        self.s_meter.setFixedWidth(METERS_WIDTH)
+        # self.s_meter.setFixedWidth(METERS_WIDTH)
         self.s_meter.setFont(METERS_FONT)
         self.s_meter.setValue(0)
         self.s_meter.setFormat(f"S: {'-':>7}")
@@ -677,7 +1164,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.alc_meter = QtWidgets.QProgressBar()
         self.alc_meter.setRange(0, 255)
         self.alc_meter.setFixedHeight(METERS_HEIGHT)
-        self.alc_meter.setFixedWidth(METERS_WIDTH)
+        # self.alc_meter.setFixedWidth(METERS_WIDTH)
         self.alc_meter.setFont(METERS_FONT)
         self.alc_meter.setValue(0)
         self.alc_meter.setFormat(f"ALC: {'-':>5}")
@@ -686,7 +1173,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.po_meter = QtWidgets.QProgressBar()
         self.po_meter.setRange(0, 255)
         self.po_meter.setFixedHeight(METERS_HEIGHT)
-        self.po_meter.setFixedWidth(METERS_WIDTH)
+        # self.po_meter.setFixedWidth(METERS_WIDTH)
         self.po_meter.setFont(METERS_FONT)
         self.po_meter.setValue(0)
         self.po_meter.setFormat(f"PO: {'-':>6}")
@@ -695,7 +1182,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.swr_meter = QtWidgets.QProgressBar()
         self.swr_meter.setRange(0, 255)
         self.swr_meter.setFixedHeight(METERS_HEIGHT)
-        self.swr_meter.setFixedWidth(METERS_WIDTH)
+        # self.swr_meter.setFixedWidth(METERS_WIDTH)
         self.swr_meter.setFont(METERS_FONT)
         self.swr_meter.setValue(0)
         self.swr_meter.setFormat(f"SWR: {'-':>5}")
@@ -708,52 +1195,49 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_smeter.activated.connect(self.cmb_smeter_change)
         self.cmb_smeter.setFixedWidth(64)
 
-        self.swr_btn = QtWidgets.QPushButton("Check SWR")
-        self.swr_btn.setFixedSize(72, 28)
-        self.swr_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-        self.swr_btn.pressed.connect(self.swr_btn_pressed)
-        self.swr_btn.released.connect(self.swr_btn_released)
+        self.layout_tx_meter = QtWidgets.QHBoxLayout()
+        self.layout_tx_meter.addWidget(self.tx_meter_label)
+        self.layout_tx_meter.addWidget(self.cmb_smeter)
 
-        # Layout poziomy
-        radio_width = QtWidgets.QHBoxLayout()
+        # Filter width
+        self.filter_width_group = QtWidgets.QGroupBox("Filter width")
+        filter_width_layout = QtWidgets.QVBoxLayout()
 
         # Radio buttons
-        self.radio_width_label = QtWidgets.QLabel("")
-        self.radio_narrow = QtWidgets.QRadioButton("NAR")
-        self.radio_normal = QtWidgets.QRadioButton("NOR")
-        self.radio_wide = QtWidgets.QRadioButton("WID")
+        self.filter_narrow = QtWidgets.QRadioButton("NAR")
+        self.filter_normal = QtWidgets.QRadioButton("NOR")
+        self.filter_wide = QtWidgets.QRadioButton("WID")
+        self.filter_normal.setChecked(True)
 
-        # Domyślne zaznaczenie (opcjonalnie)
-        self.radio_normal.setChecked(True)
+        filter_width_layout.addWidget(self.filter_narrow)
+        filter_width_layout.addWidget(self.filter_normal)
+        filter_width_layout.addWidget(self.filter_wide)
 
-        # Dodajemy do layoutu
-        radio_width.addWidget(self.radio_narrow)
-        radio_width.addWidget(self.radio_normal)
-        radio_width.addWidget(self.radio_wide)
+        self.filter_width_group.setLayout(filter_width_layout)
 
-        # Grupa przycisków (jednokrotny wybór)
         self.group = QtWidgets.QButtonGroup(self)
-        self.group.addButton(self.radio_narrow)
-        self.group.addButton(self.radio_normal)
-        self.group.addButton(self.radio_wide)
+        self.group.addButton(self.filter_narrow)
+        self.group.addButton(self.filter_normal)
+        self.group.addButton(self.filter_wide)
 
-        # Po zmianie wyboru wywołaj funkcję
-        self.group.buttonClicked.connect(self.radio_width_changed)
+        self.group.buttonClicked.connect(self.filter_width_changed)
 
-        # Layout poziomy
-        antenna_switch = QtWidgets.QHBoxLayout()
+        # --- GroupBox: Antenna ---
+        antenna_group = QtWidgets.QGroupBox("Antenna")
+
+        # Układ pionowy wewnątrz ramki
+        antenna_layout = QtWidgets.QVBoxLayout(antenna_group)
 
         # Radio buttons
-        self.antenna_switch_label = QtWidgets.QLabel("")
         self.antenna_1 = QtWidgets.QRadioButton(ANTENNA_1_NAME)
         self.antenna_2 = QtWidgets.QRadioButton(ANTENNA_2_NAME)
 
-        # Domyślne zaznaczenie (opcjonalnie)
+        # Domyślne zaznaczenie
         self.antenna_1.setChecked(True)
 
-        # Dodajemy do layoutu
-        antenna_switch.addWidget(self.antenna_1)
-        antenna_switch.addWidget(self.antenna_2)
+        # Dodajemy przyciski do layoutu pionowego
+        antenna_layout.addWidget(self.antenna_1)
+        antenna_layout.addWidget(self.antenna_2)
 
         # Grupa przycisków (jednokrotny wybór)
         self.antenna_switch_group = QtWidgets.QButtonGroup(self)
@@ -764,19 +1248,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.antenna_switch_group.buttonClicked.connect(self.antenna_switch_changed)
 
         bottom_row = QtWidgets.QHBoxLayout()
-        # bottom_row.addStretch()
-        bottom_row.addWidget(self.swr_btn)
-        bottom_row.addWidget(self.radio_width_label)
-        bottom_row.addLayout(radio_width)
         bottom_row.addStretch()
-        bottom_row.addLayout(antenna_switch)
+        bottom_row.addWidget(self.filter_width_group)
         bottom_row.addStretch()
-        bottom_row.addWidget(self.tx_meter_label)
-        bottom_row.addWidget(self.cmb_smeter)
+        bottom_row.addWidget(antenna_group)
+        bottom_row.addStretch()
 
-        # --- slider
-        self.shift_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.shift_slider.setFixedWidth(80)
+        # --- DSP Group (zawiera Shift, Notch, NR)
+        dsp_group = QtWidgets.QGroupBox("DSP")
+
+        # layout poziomy – trzy suwaki obok siebie
+        dsp_layout = QtWidgets.QHBoxLayout(dsp_group)
+
+        # --- Shift slider (pionowy)
+        self.shift_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
+        self.shift_slider.setFixedHeight(60)
         self.shift_slider.setMinimum(-1000)
         self.shift_slider.setMaximum(1000)
         self.shift_slider.setSingleStep(101)
@@ -784,20 +1270,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.shift_slider.setTickInterval(200)
         self.shift_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
         self.shift_slider.setValue(0)
-
-        # "sticky point" w środku
         self.shift_slider.valueChanged.connect(self.shift_slider_move)
 
-        # --- groupbox dla slidera
         shift_group = QtWidgets.QGroupBox("Shift")
-        shift_group.setFixedWidth(self.shift_slider.width() + 24)
-        shift_layout = QtWidgets.QHBoxLayout(shift_group)
+        shift_group.setFixedHeight(self.shift_slider.height() + 40)
+        shift_layout = QtWidgets.QVBoxLayout(shift_group)
         shift_layout.addWidget(self.shift_slider)
-        # shift_layout.addStretch()
 
-        # --- slider
-        self.notch_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.notch_slider.setFixedWidth(80)
+        # --- Notch slider (pionowy)
+        self.notch_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
+        self.notch_slider.setFixedHeight(60)
         self.notch_slider.setMinimum(0)
         self.notch_slider.setMaximum(4000)
         self.notch_slider.setSingleStep(100)
@@ -807,18 +1289,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.notch_slider.setValue(2000)
         self.notch_slider.valueChanged.connect(self.notch_slider_move)
 
-        # --- groupbox dla slidera
         self.notch_group = QtWidgets.QGroupBox("Notch")
         self.notch_group.setCheckable(True)
         self.notch_group.setChecked(False)
-        self.notch_group.setFixedWidth(self.notch_slider.width() + 24)
         self.notch_group.clicked.connect(self.notch_checked)
-        notch_layout = QtWidgets.QHBoxLayout(self.notch_group)
+        notch_layout = QtWidgets.QVBoxLayout(self.notch_group)
         notch_layout.addWidget(self.notch_slider)
 
-        # --- noise reduction slider
-        self.nr_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.nr_slider.setFixedWidth(80)
+        # --- Noise Reduction slider (pionowy)
+        self.nr_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
+        self.nr_slider.setFixedHeight(60)
         self.nr_slider.setMinimum(1)
         self.nr_slider.setMaximum(11)
         self.nr_slider.setSingleStep(1)
@@ -828,14 +1308,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.nr_slider.setValue(DEFAULT_NOISE_REDUCTION)
         self.nr_slider.valueChanged.connect(self.nr_slider_move)
 
-        # --- groupbox dla slidera
         self.nr_group = QtWidgets.QGroupBox("NR")
         self.nr_group.setCheckable(True)
         self.nr_group.setChecked(False)
-        self.nr_group.setFixedWidth(self.nr_slider.width() + 24)
         self.nr_group.clicked.connect(self.nr_checked)
-        nr_layout = QtWidgets.QHBoxLayout(self.nr_group)
+        nr_layout = QtWidgets.QVBoxLayout(self.nr_group)
         nr_layout.addWidget(self.nr_slider)
+
+        # --- dodaj wszystkie podgrupy do poziomego układu DSP
+        dsp_layout.addWidget(shift_group)
+        dsp_layout.addWidget(self.notch_group)
+        dsp_layout.addWidget(self.nr_group)
 
         # przycisk odtwarzania
         self.play1_btn = QtWidgets.QPushButton('▶️ ' + REC1_PATH.split('/')[-1].replace('.wav', '')[0:5])
@@ -854,33 +1337,32 @@ class MainWindow(QtWidgets.QMainWindow):
         player_layout.addWidget(self.play1_btn)
         player_layout.addWidget(self.play2_btn)
 
+        self.waterfall_widget = WaterfallWidget(width=int(self.width()), height=int(self.height()))
+
         # --- dodanie do bottom_row_2
         bottom_row_2 = QtWidgets.QHBoxLayout()
-        bottom_row_2.addWidget(shift_group)
-        bottom_row_2.addWidget(self.notch_group)
-        bottom_row_2.addWidget(self.nr_group)
-        bottom_row_2.addWidget(self.player_group)
-        bottom_row_2.addStretch()
+        bottom_row_2.addWidget(dsp_group)
+
+        # top row
+        top_row = QtWidgets.QHBoxLayout()
+        top_row.addWidget(left_widget)
+        top_row.addWidget(freq_widget)
+        top_row.addWidget(right_container)
+        top_row.addLayout(knobs_row)
+        top_row.addLayout(btns_layout)
+        top_row.addLayout(bottom_row)
+        top_row.addLayout(bottom_row_2)
+
+        self.smeter_row = QtWidgets.QHBoxLayout()
+        self.smeter_row.addWidget(self.s_meter)
+        self.smeter_row.addSpacing(20)
+        self.smeter_row.addLayout(self.layout_tx_meter)
 
         # ---- root layout
         self.root = QtWidgets.QVBoxLayout(central)
         self.root.addLayout(top_row)
-        self.root.addLayout(knobs_row)
-        self.root.addSpacing(8)
-        self.root.addLayout(btns_layout)
-        self.root.addSpacing(16)
-        self.root.addWidget(self.s_meter)
-        self.root.addSpacing(8)
-        self.root.addLayout(bottom_row)
-        self.root.addSpacing(8)
-        self.root.addLayout(bottom_row_2)
-        # self.root.addWidget(self.swr_btn)
-        # root.addSpacing(METERS_SPACING)
-        # root.addWidget(self.alc_meter)
-        # root.addSpacing(METERS_SPACING)
-        # root.addWidget(self.po_meter)
-        # root.addSpacing(METERS_SPACING)
-        # root.addWidget(self.swr_meter)
+        self.root.addLayout(self.smeter_row)
+        self.root.addWidget(self.waterfall_widget)
         self.root.addStretch(0)
 
         self.status = self.statusBar()
@@ -905,6 +1387,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.send_fst_signal.connect(self.fst_action)
         self.tx_power_btn.clicked.connect(self.set_tx_power)
         self.sound_finished.connect(self._on_sound_finished)
+
+        # Waterfall
+        self.ws_thread = WsReceiver(WS_URL, fft_size=DEFAULT_FFT_SIZE)
+        self.ws_thread.push_row_signal.connect(self.waterfall_widget.push_row)
+        self.ws_thread.config_signal.connect(self.waterfall_widget.update_config)
+        self.waterfall_widget.samp_rate = self.ws_thread.samp_rate
+        self.waterfall_widget.center_freq = self.ws_thread.center_freq
+        self.waterfall_widget.freq_clicked.connect(self.on_freq_clicked)
+        self.waterfall_freq_update.connect(self.waterfall_widget.update_selected_freq)
+        self.waterfall_freq_update.connect(self.ws_thread.send_set_frequency)
+        self.ws_thread.start()
 
         self.client = RigctlClient(HOST, PORT, timeout=TCP_TIMEOUT)
 
@@ -960,7 +1453,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not self.active_vfo:
                     self.set_frequency_label(self.freq_display, val)
                     self.current_freq = self.vfoa_freq
-                    self.waterfall_freq.emit(self.current_freq)
+                    self.waterfall_freq_update.emit(self.current_freq)
                     self.active_vfo_label.setText("VFO A")
                 else:
                     self.set_frequency_label(self.freq_display_sub, val)
@@ -970,7 +1463,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if self.active_vfo:
                     self.set_frequency_label(self.freq_display, val)
                     self.current_freq = self.vfob_freq
-                    self.waterfall_freq.emit(self.current_freq)
+                    self.waterfall_freq_update.emit(self.current_freq)
                     self.active_vfo_label.setText("VFO B")
                 else:
                     self.set_frequency_label(self.freq_display_sub, val)
@@ -1032,15 +1525,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 if val:
                     self.power_btn.setText("OFF")
                     self.power_btn.setStyleSheet("border-radius: 24px; background-color: #fa6060; border: 1px solid black;")
-                    self.power_indicator.setStyleSheet("background-color: " + ACTIVE_COLOR + "; border-radius: 14px; border: 1px solid black;")
-                    self.power_indicator.setToolTip("Radio ON")
                 else:
                     # TODO: all values can be zeroed
                     self.power_btn.setText("ON")
                     self.power_btn.setStyleSheet("border-radius: 24px; background-color: #60fa60; border: 1px solid black;")
-                    self.power_indicator.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; border-radius: 14px; border: 1px solid black;")
-                    self.power_indicator.setToolTip("Radio OFF")
-                    # self.worker.pause(SLOWER_POLL_MS)
         elif key == "MD0":
             if val is not None:
                 self.mode_label.setText(radioModesRx[val])
@@ -1055,14 +1543,14 @@ class MainWindow(QtWidgets.QMainWindow):
         elif key == "SH0":
             if val is not None:
                 if val <= 10:
-                    self.radio_width = RADIO_WIDTH_SSB_NARROW
-                    self.radio_narrow.setChecked(True)
+                    self.filter_width = FILTER_WIDTH_SSB_NARROW
+                    self.filter_narrow.setChecked(True)
                 elif val > 10 and val <= 21:
-                    self.radio_width = RADIO_WIDTH_SSB_NORMAL
-                    self.radio_normal.setChecked(True)
+                    self.filter_width = FILTER_WIDTH_SSB_NORMAL
+                    self.filter_normal.setChecked(True)
                 elif val > 21 and val <= 31:
-                    self.radio_width = RADIO_WIDTH_SSB_WIDE
-                    self.radio_wide.setChecked(True)
+                    self.filter_width = FILTER_WIDTH_SSB_WIDE
+                    self.filter_wide.setChecked(True)
         elif key == "IS0":
             if val is not None:
                 # self.shift_slider.setValue(val)
@@ -1074,6 +1562,16 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.notch_group.setChecked(True)
                 else:
                     self.notch_group.setChecked(False)
+
+    def on_freq_clicked(self, freq: int):
+        freq = int(freq - freq%100)
+        self.frequency_change(freq)
+
+        try:
+            if hasattr(self, "ws_thread") and self.ws_thread is not None:
+                self.ws_thread.send_set_frequency(freq)
+        except Exception as e:
+            print("Failed to request setfrequency:", e)
 
     def ignore_next_data(self, cnt=2):
         self.ignore_next_data_switch = True
@@ -1114,23 +1612,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ignore_next_data()
         self.client.send(cmd)
 
-    def show_waterfall(self):
-        """Show waterfall window"""
-        if self.waterfall_window is None:
-            self.waterfall_window = WaterfallWindow()
-            self.waterfall_window.main_ref = self  # przekazujemy referencję do głównego okna
-            self.waterfall_window.freq_changed.connect(self.on_freq_from_waterfall)
-            self.waterfall_freq.connect(self.waterfall_window.on_freq_update)
-        self.waterfall_window.show()
-        self.waterfall_window.raise_()
-
-    def on_freq_from_waterfall(self, freq):
-        # print(f"Otrzymano częstotliwość z WaterfallWindow: {freq}")
-        self.frequency_change(freq)
-
     def set_frequency_label(self, label, freq):
-        # label.setText(str(float(freq/1000000)).ljust(8, '0').zfill(8) + " MHz")
-        label.setText(f"{freq/1000000:02.5f}MHz")
+        try:
+            mhz = float(freq) / 1_000_000.0
+        except Exception:
+            label.setText("??.?????MHz")
+            return
+
+        int_part = int(mhz)
+        frac_part = abs(mhz - int_part)
+
+        frac_str = f"{frac_part:.5f}"
+        frac_str = frac_str[1:]
+
+        int_str = str(int_part).zfill(2)
+
+        label.setText(f"{int_str}{frac_str}MHz")
+
 
     def s_meter_label(self, val: int) -> str:
         """
@@ -1331,7 +1829,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def frequency_change(self, freq):
         cmd = f"F {freq}\n"
         self.set_frequency_label(self.freq_display, freq)
-        self.waterfall_freq.emit(freq)
+        self.waterfall_freq_update.emit(freq)
         self.ignore_next_data()
         self.client.send(cmd)
 
@@ -1441,15 +1939,15 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.swr_btn_released()
 
-    def radio_width_changed(self):
-        if self.radio_narrow.isChecked():
-            self.radio_width = RADIO_WIDTH_SSB_NARROW
-        elif self.radio_normal.isChecked():
-            self.radio_width = RADIO_WIDTH_SSB_NORMAL
-        elif self.radio_wide.isChecked():
-            self.radio_width = RADIO_WIDTH_SSB_WIDE
+    def filter_width_changed(self):
+        if self.filter_narrow.isChecked():
+            self.filter_width = FILTER_WIDTH_SSB_NARROW
+        elif self.filter_normal.isChecked():
+            self.filter_width = FILTER_WIDTH_SSB_NORMAL
+        elif self.filter_wide.isChecked():
+            self.filter_width = FILTER_WIDTH_SSB_WIDE
 
-        cmd = f"M " + self.mode_label.text() + " " + str(self.radio_width)
+        cmd = f"M " + self.mode_label.text() + " " + str(self.filter_width)
         self.ignore_next_data()
         self.client.send(cmd)
 
