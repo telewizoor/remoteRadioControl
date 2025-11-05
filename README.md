@@ -4,11 +4,5 @@ Currently configured for Yaesu FT-450D and Hamlib software run on Raspberry Pi4.
 OpenWebRX+ for waterfall view.
 Mumble for voice transmission.
 
-**Integrated with OpenWebRX+ and Hamlib**
-<img width="1901" height="1205" alt="control1" src="https://github.com/user-attachments/assets/1404efb5-131f-4094-bfc4-d359273fc35a" />
-
-**Working with LOG4OM2**
-<img width="2560" height="1336" alt="control2" src="https://github.com/user-attachments/assets/9d9cfd7d-4a3c-43ac-8c2d-eaee79caa6e7" />
-
-**Adapter for MH31 mic connected to PC**
-![image](https://github.com/user-attachments/assets/f780dbc4-8c6a-420e-ae01-91700deb08a3)
+**New version with built in waterfall view**
+<img width="2052" height="563" alt="rig_w_waterfall" src="https://github.com/user-attachments/assets/4b6b4ae6-f0c1-45b6-9cf6-4f016ff7dfef" />
