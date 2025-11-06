@@ -37,6 +37,7 @@ SLOWER_POLL_MS = 2000
 MAX_RETRY_CNT = 3
 
 # Functional
+PLAYER_ACTIVE = False
 FREQ_STEP_SLOW = 100
 FREQ_STEP_FAST = 2500
 TX_OFF_DELAY = 100
@@ -46,18 +47,18 @@ FST_KEY = 'w'
 
 # Graphics
 WINDOW_WIDTH_PERCENTAGE  = 80
-WINDOW_HEIGHT_PERCENTAGE = 20
+WINDOW_HEIGHT_PERCENTAGE = 35
 BUTTON_COLOR = "#FFDF85"
 NOT_ACTIVE_COLOR = "lightgray"
 ACTIVE_COLOR = "lightgreen"
 
-ROUND_BUTTON_SIZE = 44
+ROUND_BUTTON_SIZE = 40
 
-SMALL_BTN_WIDTH  = 64
+SMALL_BTN_WIDTH  = 56
 SMALL_BTN_HEIGHT = 28
 
-BIG_KNOB_SIZE   = 60
-SMALL_KNOB_SIZE = 50
+BIG_KNOB_SIZE   = 50
+SMALL_KNOB_SIZE = 40
 KNOB_FONT_SIZE  = 10
 
 # Radio width
@@ -97,6 +98,7 @@ REC1_PATH = dir_path + '/recs/sp9pho_en.wav'
 REC2_PATH = dir_path + '/recs/cq_sp9pho.wav'
 
 # Antenna switch
+ANTENNA_SWITCH_ENABLED = False
 ANTENNA_SWITCH_PORT = 5000
 ANTENNA_1_NAME = 'Hex'
 ANTENNA_1_CMD = '1'
@@ -523,8 +525,8 @@ class WaterfallWidget(QtWidgets.QWidget):
         super().__init__(parent)
         self.setWindowTitle("Waterfall view")
         self.width_px = width
-        self.height_px = height
-        self.setMinimumSize(400, height)
+        self.height_px = int(height/2)
+        self.setMinimumSize(400, int(height/2))
 
         # QImage jako bufor tylko do wyświetlania; trzymamy też _buffer (numpy) żeby bezpiecznie modyfikować
         self._image = QtGui.QImage(self.width_px, self.height_px, QtGui.QImage.Format_RGB888)
@@ -614,7 +616,6 @@ class WaterfallWidget(QtWidgets.QWidget):
             self.update()
 
     def resizeEvent(self, event):
-        """Reaguje na zmianę rozmiaru okna."""
         new_size = event.size()
         self.width_px = new_size.width()
         self.height_px = new_size.height()
@@ -1018,9 +1019,10 @@ class MainWindow(QtWidgets.QMainWindow):
         sizeObject = QtWidgets.QDesktopWidget().availableGeometry(-1)
         windowWidth = int(WINDOW_WIDTH_PERCENTAGE / 100 * sizeObject.width())
         windowHeight = int(WINDOW_HEIGHT_PERCENTAGE / 100 * sizeObject.height())
-        self.setGeometry(10, sizeObject.height() - 2*windowHeight, windowWidth, windowHeight)
+        windowHeight = 400
+        self.setGeometry(0, sizeObject.height() - windowHeight, windowWidth, windowHeight)
 
-        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        # self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowIcon(QIcon("logo.ico"))
 
         # self.setWindowOpacity(0.8)
@@ -1083,7 +1085,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # główna częstotliwość
         self.freq_display = QtWidgets.QLabel("--- MHz")
-        self.freq_display.setFont(QtGui.QFont("Monospace", 14, QtGui.QFont.Bold))
+        self.freq_display.setFont(QtGui.QFont("Monospace", 12, QtGui.QFont.Bold))
         self.freq_display.setAlignment(QtCore.Qt.AlignCenter)
         self.set_frequency_label(self.freq_display, 0)
 
@@ -1118,6 +1120,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.nb_btn = QtWidgets.QPushButton("NB")
         self.nb_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.nb_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        # self.nb_btn.setFont(QtGui.QFont("Monospace", 7))
         self.nb_btn.clicked.connect(self.nb_btn_clicked)
         self.nb_active = 0
 
@@ -1131,6 +1134,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.monitor_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.monitor_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.monitor_btn.setText("MONITOR")
+        # self.monitor_btn.setFont(QtGui.QFont("Monospace", 7))
         self.monitor_btn.clicked.connect(self.monitor_btn_clicked)
         self.monitor_active = 0
 
@@ -1146,20 +1150,63 @@ class MainWindow(QtWidgets.QMainWindow):
 
         right_grid.addWidget(self.swr_btn, 2, 0)
 
-        # ---- middle: knobs (FREQ big, then SQUELCH + VOLUME)
-        self.knob_fast_freq = BigKnob("Fast", size=BIG_KNOB_SIZE, value_label_visible=False)
-        self.knob_fast_freq.dial.setWrapping(True)
-        self.knob_fast_freq.dial.setNotchesVisible(False)  # bo to ma być ciągłe
-        self.knob_fast_freq.dial.setRange(0, 10)          # 0–100 kroków w kółko
-        self.knob_fast_freq.dial.valueChanged.connect(self.fast_freq_step)
-        self.last_fast_freq_pos = 0
+        # --- GRUPA Z PRZYCISKAMI FREQ CTRL ---
+        self.group_freq_ctrl = QtWidgets.QGroupBox("Freq Ctrl")
+        self.group_freq_ctrl.setObjectName("groupFreqCtrl")
 
-        self.knob_freq = BigKnob("Slow", size=BIG_KNOB_SIZE, value_label_visible=False)
-        self.knob_freq.dial.setWrapping(True)
-        self.knob_freq.dial.setNotchesVisible(False)  # bo to ma być ciągłe
-        self.knob_freq.dial.setRange(0, 10)          # 0–100 kroków w kółko
-        self.knob_freq.dial.valueChanged.connect(self.freq_step)
-        self.last_freq_pos = 0
+        # jeśli chcesz, żeby ramka miała stały rozmiar (opcjonalne)
+        # self.group_freq_ctrl.setFixedSize(80, 80)
+        self.group_freq_ctrl.setContentsMargins(12,0,12,0)
+
+        # przyciski (jak masz już zdefiniowane, po prostu użyj tych obiektów)
+        self.btn_freq_plus_slow = QtWidgets.QPushButton("+")
+        self.btn_freq_plus_fast = QtWidgets.QPushButton("+\n+")
+        self.btn_freq_minus_slow = QtWidgets.QPushButton("-")
+        self.btn_freq_minus_fast = QtWidgets.QPushButton("-\n-")
+
+        # ustaw rozmiary i politykę rozciągania (ważne)
+        for btn in [self.btn_freq_plus_slow, self.btn_freq_plus_fast,
+                    self.btn_freq_minus_slow, self.btn_freq_minus_fast]:
+            btn.setFixedSize(32, 32)
+            btn.setFont(QtGui.QFont("Monospace", 8, QtGui.QFont.Bold))
+            btn.setStyleSheet(
+                "background-color: " + NOT_ACTIVE_COLOR +
+                "; text-align: center; border-radius: 8px; border: 1px solid black; margin: 0px; padding: 0px;"
+            )
+            btn.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+
+        # podłączenia
+        self.btn_freq_plus_slow.clicked.connect(lambda: self.frequency_step(+1, FREQ_STEP_SLOW))
+        self.btn_freq_plus_fast.clicked.connect(lambda: self.frequency_step(+1, FREQ_STEP_FAST))
+        self.btn_freq_minus_slow.clicked.connect(lambda: self.frequency_step(-1, FREQ_STEP_SLOW))
+        self.btn_freq_minus_fast.clicked.connect(lambda: self.frequency_step(-1, FREQ_STEP_FAST))
+
+        # siatka 2x2 dla przycisków
+        freq_grid = QtWidgets.QGridLayout()
+        freq_grid.setVerticalSpacing(8)    # pionowy odstęp między wierszami (zbliż je)
+        freq_grid.setHorizontalSpacing(8)  # odstęp między kolumnami
+        freq_grid.setContentsMargins(0, 0, 0, 0)
+
+        freq_grid.addWidget(self.btn_freq_plus_slow, 0, 0, QtCore.Qt.AlignCenter)
+        freq_grid.addWidget(self.btn_freq_plus_fast, 0, 1, QtCore.Qt.AlignCenter)
+        freq_grid.addWidget(self.btn_freq_minus_slow, 1, 0, QtCore.Qt.AlignCenter)
+        freq_grid.addWidget(self.btn_freq_minus_fast, 1, 1, QtCore.Qt.AlignCenter)
+
+        # główny layout grupy: użyj stretchów żeby wycentrować grid pionowo
+        group_layout = QtWidgets.QVBoxLayout()
+        group_layout.setContentsMargins(4, 20, 4, 8)
+        group_layout.setSpacing(0)
+        group_layout.addStretch(1)                  # zajmuje miejsce nad siatką
+        group_layout.addLayout(freq_grid)          # siatka przycisków -> będzie wyśrodkowana
+        group_layout.addStretch(1)                  # zajmuje miejsce pod siatką
+
+        self.group_freq_ctrl.setLayout(group_layout)
+
+        # dodaj grupę do głównego layoutu (tam gdzie chcesz)
+        # main_layout.addWidget(self.group_freq_ctrl)
+
+
+
         self.current_freq = 14074000  # Hz (odczyt z rigctld)
 
         self.knob_squelch = BigKnob("Squelch", size=SMALL_KNOB_SIZE)
@@ -1173,10 +1220,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_volume_pos = 0
 
         knobs_row = QtWidgets.QHBoxLayout()
-        knobs_row.addWidget(self.knob_fast_freq, alignment=QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
-        knobs_row.addWidget(self.knob_freq, alignment=QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
+        # knobs_row.addWidget(self.knob_fast_freq, alignment=QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
+        # knobs_row.addWidget(self.knob_freq, alignment=QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
+
         knobs_row.addWidget(self.knob_squelch, alignment=QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
         knobs_row.addWidget(self.knob_volume, alignment=QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
+
 
         # ---- bottom buttons: teraz w 2 rzędach
         btns_layout = QtWidgets.QVBoxLayout()
@@ -1258,7 +1307,7 @@ class MainWindow(QtWidgets.QMainWindow):
         btns_layout.addLayout(btn_row2)
 
         self.ptt_btn = QtWidgets.QPushButton("PTT\n(" + PTT_KEY + ")")
-        self.ptt_btn.setFixedSize(SMALL_BTN_WIDTH * 2, SMALL_BTN_HEIGHT * 3)
+        self.ptt_btn.setFixedSize(SMALL_BTN_WIDTH * 1, SMALL_BTN_HEIGHT * 3)
         self.ptt_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 20px; border: 1px solid black;")
         self.ptt_btn.pressed.connect(self.ptt_btn_pressed)
         self.ptt_btn.released.connect(self.ptt_btn_released)
@@ -1317,7 +1366,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.layout_tx_meter.addWidget(self.cmb_smeter)
 
         # Filter width
-        self.filter_width_group = QtWidgets.QGroupBox("Filter width")
+        self.filter_width_group = QtWidgets.QGroupBox("Filter")
         filter_width_layout = QtWidgets.QVBoxLayout()
 
         # Radio buttons
@@ -1368,7 +1417,8 @@ class MainWindow(QtWidgets.QMainWindow):
         bottom_row.addStretch()
         bottom_row.addWidget(self.filter_width_group)
         bottom_row.addStretch()
-        bottom_row.addWidget(antenna_group)
+        if ANTENNA_SWITCH_ENABLED:
+            bottom_row.addWidget(antenna_group)
         bottom_row.addStretch()
 
         DSP_SLIDER_HEIGHT = 80  # lub dowolna wysokość w px, np. 60 / 100 / 120
@@ -1465,13 +1515,16 @@ class MainWindow(QtWidgets.QMainWindow):
         top_row.addWidget(right_container)
         top_row.addLayout(knobs_row)
         top_row.addStretch()
+        top_row.addWidget(self.group_freq_ctrl)
+        top_row.addStretch()
         top_row.addLayout(btns_layout)
         top_row.addStretch()
         top_row.addWidget(self.ptt_btn)
         top_row.addStretch()
         top_row.addLayout(bottom_row)
         top_row.addLayout(bottom_row_2)
-        top_row.addWidget(self.player_group)
+        if PLAYER_ACTIVE:
+            top_row.addWidget(self.player_group)
         top_row.addStretch()
 
         self.smeter_row = QtWidgets.QHBoxLayout()
@@ -1945,6 +1998,17 @@ class MainWindow(QtWidgets.QMainWindow):
         cmd = f"M " + radioModesTx[new_mode] + " 0"
         self.client.send(cmd)
 
+    def frequency_step(self, sign, step):
+        if sign > 0:
+            self.current_freq -= self.current_freq%step
+            self.current_freq += step
+        elif sign < 0:
+            if self.current_freq%step:
+                self.current_freq -= self.current_freq%step
+            else:
+                self.current_freq -= step
+        self.frequency_change(self.current_freq)
+
     def freq_step(self, new_pos: int):
         delta = new_pos - self.last_freq_pos
         self.last_freq_pos = new_pos
@@ -1955,18 +2019,9 @@ class MainWindow(QtWidgets.QMainWindow):
             delta += 100
 
         if delta >= 0:
-            delta = 1
-            self.current_freq -= self.current_freq%FREQ_STEP_SLOW
-            self.current_freq += delta * FREQ_STEP_SLOW
+            self.frequency_step(1, FREQ_STEP_SLOW)
         else:
-            delta = -1
-            # print(self.current_freq%FREQ_STEP_SLOW)
-            if self.current_freq%FREQ_STEP_SLOW:
-                self.current_freq -= self.current_freq%FREQ_STEP_SLOW
-            else:
-                self.current_freq += delta * FREQ_STEP_SLOW
-
-        self.frequency_change(self.current_freq)
+            self.frequency_step(-1, FREQ_STEP_SLOW)
     
     def fast_freq_step(self, new_pos: int):
         delta = new_pos - self.last_fast_freq_pos
@@ -1978,19 +2033,9 @@ class MainWindow(QtWidgets.QMainWindow):
             delta += 100
 
         if delta >= 0:
-            delta = 1
-            self.current_freq -= self.current_freq%FREQ_STEP_FAST
-            self.current_freq += delta * FREQ_STEP_FAST
+            self.frequency_step(1, FREQ_STEP_FAST)
         else:
-            delta = -1
-            # print(self.current_freq%FREQ_STEP_FAST)
-            if self.current_freq%FREQ_STEP_FAST:
-                self.current_freq -= self.current_freq%FREQ_STEP_FAST
-            else:
-                self.current_freq += delta * FREQ_STEP_FAST
-
-        self.frequency_change(self.current_freq)
-
+            self.frequency_step(-1, FREQ_STEP_FAST)
 
     def frequency_change(self, freq):
         cmd = f"F {freq}\n"
