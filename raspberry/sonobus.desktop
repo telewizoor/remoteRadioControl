@@ -1,0 +1,4 @@
+[Desktop Entry]
+Name=Sonobus client start
+Exec=sonobus
+Type=Application

@@ -106,7 +106,7 @@ ANTENNA_2_NAME = 'Dpl'
 ANTENNA_2_CMD = '2'
 
 # Waterfall
-WS_URL = "ws://192.168.152.12:8073/ws/"
+WS_URL = "ws://" + HOST + ":8073/ws/"
 DEFAULT_FFT_SIZE = 2048
 
 INITIAL_ZOOM = 0.25

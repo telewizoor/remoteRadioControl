@@ -1,0 +1,15 @@
+[Unit]
+Description=Cat Control Service
+After=multi-user.target
+
+[Service]
+ExecStart=%h/Project/remoteRadioControl/raspberry/startCAT.sh
+Restart=always
+RestartSec=30
+WorkingDirectory=%h/Project/remoteRadioControl/raspberry
+StandardOutput=journal
+StandardError=journal
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
