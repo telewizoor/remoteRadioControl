@@ -67,6 +67,24 @@
       </div>
     </div>
 
+<div class="extra-controls">
+  <div class="filter-section">
+    <h3>Filter</h3>
+    <div class="filter-buttons">
+      <button class="small-btn" id="filterNarrow">NAR</button>
+      <button class="small-btn active" id="filterNormal">NOR</button>
+      <button class="small-btn" id="filterWide">WID</button>
+    </div>
+  </div>
+
+  <div class="antenna-section">
+    <h3>Antenna</h3>
+    <label><input type="radio" name="antenna" value="1" checked> ANT 1</label>
+    <label><input type="radio" name="antenna" value="2"> ANT 2</label>
+  </div>
+</div>
+
+
     <!-- S-meter -->
     <div class="smeter-area">
       <progress id="smeter" value="0" max="255"></progress>
@@ -77,6 +95,12 @@
     <div class="ptt-row">
         <button class="ptt-btn" id="pttBtn">PTT</button>
     </div>
+
+<div class="waterfall-container">
+  <h3>Waterfall</h3>
+  <canvas id="waterfallCanvas" width="600" height="200"></canvas>
+</div>
+
   </div>
 
   <script src="/app.js"></script>

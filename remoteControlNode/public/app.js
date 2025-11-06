@@ -318,3 +318,54 @@ document.addEventListener('keyup', (e) => {
     sendCmd('T 0');
   }
 });
+
+// --- FILTER buttons ---
+const filterBtns = {
+  narrow: document.getElementById("filterNarrow"),
+  normal: document.getElementById("filterNormal"),
+  wide: document.getElementById("filterWide")
+};
+
+Object.entries(filterBtns).forEach(([key, btn]) => {
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    Object.values(filterBtns).forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    socket.emit("setFilterWidth", key.toUpperCase());
+  });
+});
+
+// --- ANTENNA radio buttons ---
+document.querySelectorAll('input[name="antenna"]').forEach(radio => {
+  radio.addEventListener("change", () => {
+    if (radio.checked) socket.emit("setAntenna", radio.value);
+  });
+});
+
+// --- WATERFALL ---
+const wsUrl = "ws://192.168.152.12:8073/ws/";
+const canvas = document.getElementById("waterfallCanvas");
+if (canvas) {
+  const ctx = canvas.getContext("2d");
+  const ws = new WebSocket(wsUrl);
+  ws.binaryType = "arraybuffer";
+
+  ws.onmessage = (event) => {
+    const arr = new Uint8Array(event.data);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    ctx.putImageData(imageData, 0, 1);
+    const line = ctx.createImageData(canvas.width, 1);
+    for (let x = 0; x < canvas.width; x++) {
+      const v = arr[Math.floor((x / canvas.width) * arr.length)];
+      const col = v < 85 ? [0, 0, v * 3] :
+                  v < 170 ? [0, (v - 85) * 3, 255] :
+                            [(v - 170) * 3, 255, 255 - (v - 170) * 3];
+      line.data[x * 4 + 0] = col[0];
+      line.data[x * 4 + 1] = col[1];
+      line.data[x * 4 + 2] = col[2];
+      line.data[x * 4 + 3] = 255;
+    }
+    ctx.putImageData(line, 0, 0);
+  };
+}
+

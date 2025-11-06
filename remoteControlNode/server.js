@@ -177,6 +177,20 @@ io.on('connection', (socket) => {
 
   // request immediate poll
   socket.on('poll_now', () => pollOnce());
+
+  socket.on('setFilterWidth', (mode) => {
+    const cmd = {
+      NARROW: 'FILTER NAR',
+      NORMAL: 'FILTER NOR',
+      WIDE: 'FILTER WID'
+    }[mode];
+    if (cmd) sendCommand(cmd);
+  });
+
+  socket.on('setAntenna', (ant) => {
+    sendCommand('ANT ' + ant);
+  });
+
 });
 
 // start server + connect rig
