@@ -23,11 +23,13 @@ OpenWebRX+ for waterfall view.
 **Instruction:**
 First of all you need to have Raspberry Pi with GUI and VNC configured - it will be used later for SonoBus configuration.
 In my setup I have Raspberry connected to the Transceiver with USB-RS232 cable and audio cables - radio output connected to the mic input and mic input connected to the speaker output of USB audio card. For microphone input please take a look at circuit diagram. Mic signal is connected to the tip of mini-jack with 70kOhm resistor in series. Mic gnd and gnd is connected to mini-jack ring with 100nF in series. Input/Output levels must be adjusted using 'alsamixer' command.
+
 For waterfall view I installed special board into the transceiver to get the signal output for SDR.
 PAT-V from that shop:
 https://www.sdr-kits.net/Panoramic-Adaptor-Tap-Boards
 http://huprf.com/huprf/wp-content/uploads/2016/03/PAT-FT450-Installation-Notes-V2.pdf
-
+<img width="1024" height="577" alt="mic_input" src="https://github.com/user-attachments/assets/e8f733e3-7450-4805-ae78-dc12c9599ba7" />
+(thanks author for that picture!)
 Additionally I am using antenna switch for switching between four different antennas, just fyi that it is possible.
 
 That's about the hardware.
