@@ -8,6 +8,7 @@ OpenWebRX+ for waterfall view.
 <img width="2052" height="563" alt="rig_w_waterfall" src="https://github.com/user-attachments/assets/4b6b4ae6-f0c1-45b6-9cf6-4f016ff7dfef" />
 
 **tldr:**
+
 0. Raspberry with Bookworm + GUI(for realvnc)
 1. Cat cable connected to raspberry and the radio
 2. Install and start hamlib daemon(checkout branch?)
