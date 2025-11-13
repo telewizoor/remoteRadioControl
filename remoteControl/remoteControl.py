@@ -98,12 +98,14 @@ REC1_PATH = dir_path + '/recs/sp9pho_en.wav'
 REC2_PATH = dir_path + '/recs/cq_sp9pho.wav'
 
 # Antenna switch
-ANTENNA_SWITCH_ENABLED = False
+ANTENNA_SWITCH_ENABLED = True
 ANTENNA_SWITCH_PORT = 5000
 ANTENNA_1_NAME = 'Hex'
 ANTENNA_1_CMD = '1'
 ANTENNA_2_NAME = 'Dpl'
 ANTENNA_2_CMD = '2'
+ANTENNA_3_NAME = 'End'
+ANTENNA_3_CMD = '3'
 
 # Waterfall
 WS_URL = "ws://" + HOST + ":8073/ws/"
@@ -142,6 +144,32 @@ WF_THEME = [
 
 cyclicRefreshParams = ['AG0', 'SQ0', 'RM0', 'RM1', 'RM4', 'RM5', 'RM6', 'PS', 'FA', 'FB', 'PC', 'AC', 'TX', 'RA0', 'PA0', 'VS', 'NB0', 'MD0', 'ML0', 'SH0', 'IS0', 'BP00']
 
+cyclicRefreshParams = [
+    {'cmd': 'l AF', 'respLines': 1, 'parser': 'parse_af_gain'},
+    {'cmd': 'l SQL', 'respLines': 1, 'parser': 'parse_sql_lvl'},
+    {'cmd': 'l STRENGTH', 'respLines': 1, 'parser': 'parse_strength'},
+    {'cmd': 'l RFPOWER_METER', 'respLines': 1, 'parser': 'parse_rf_power_meter'},
+    {'cmd': 'l ALC', 'respLines': 1, 'parser': 'parse_alc'},
+    {'cmd': 'l SWR', 'respLines': 1, 'parser': 'parse_swr'},
+    {'cmd': '\\get_powerstat', 'respLines': 1, 'parser': 'parse_powerstat'},
+    {'cmd': 'f', 'respLines': 1, 'parser': 'parse_freq'},
+    {'cmd': '\\get_vfo_info VFOA', 'respLines': 5, 'parser': 'parse_vfoa'},
+    {'cmd': '\\get_vfo_info VFOB', 'respLines': 5, 'parser': 'parse_vfob'},
+    {'cmd': 'l RFPOWER', 'respLines': 1, 'parser': 'parse_rf_power'},
+    {'cmd': 'u TUNER', 'respLines': 1, 'parser': 'parse_tuner'},
+    {'cmd': 't', 'respLines': 1, 'parser': 'parse_tx'},
+    {'cmd': 'l PREAMP', 'respLines': 1, 'parser': 'parse_preamp', 'block_on_tx': True},
+    {'cmd': 'v', 'respLines': 1, 'parser': 'parse_vfo'},
+    {'cmd': 'u NB', 'respLines': 1, 'parser': 'parse_nb'},
+    {'cmd': 'u MON', 'respLines': 1, 'parser': 'parse_mon'},
+    {'cmd': 'l IF', 'respLines': 1, 'parser': 'parse_if'},
+    {'cmd': 'u MN', 'respLines': 1, 'parser': 'parse_mn', 'block_on_tx': True},
+    {'cmd': 'l NOTCHF', 'respLines': 1, 'parser': 'parse_notchf', 'block_on_tx': True},
+    {'cmd': 'u NR', 'respLines': 1, 'parser': 'parse_u_nr', 'block_on_tx': True},
+    {'cmd': 'l NR', 'respLines': 1, 'parser': 'parse_l_nr', 'block_on_tx': True},
+    # {'cmd': 'wRA0;', 'respLines': 1, 'parser': 'parse_att'},
+]
+
 radioModesRx = ['', 'LSB', 'USB', 'CW', 'FM', 'AM', 'DATA-L', 'CWR', 'USER-L', 'DATA-U']
 radioModesTx = ['', 'LSB', 'USB', 'CW', 'FM', 'AM', 'CWR']
 
@@ -169,7 +197,6 @@ class RigctlClient:
             if hasattr(self, 's') :#and self.retry_cnt < MAX_RETRY_CNT:
                 self.s.settimeout(self.timeout)
                 self.s.sendall(cmd.encode("ascii", errors="ignore"))
-                # print(cmd)
                 chunks = []
                 while True:
                     try:
@@ -214,7 +241,7 @@ class BigKnob(QtWidgets.QWidget):
         self.user_active = False
 
         self.dial = QtWidgets.QDial()
-        self.dial.setRange(0, 255)
+        self.dial.setRange(0, 100)
         self.dial.setNotchesVisible(True)
         self.dial.setWrapping(False)
         self.dial.setFixedSize(size, size)   # <<< używamy parametru size
@@ -343,6 +370,7 @@ class PollWorker(QtCore.QObject):
         self.poll_ms = poll_ms
         self._timer = None
         self.retry_cnt = 0
+        self.tx_active = 0
 
     @QtCore.pyqtSlot()
     def start(self):
@@ -369,6 +397,13 @@ class PollWorker(QtCore.QObject):
         if self._timer and not self._timer.isActive():
             self._timer.start()
 
+    @QtCore.pyqtSlot(int)
+    def tx_action(self, val: int):
+        if val:
+            self.tx_active = 1
+        else:
+            self.tx_active = 0
+
     def poll_all(self):
         if not self.client.connected:
             try:
@@ -376,11 +411,21 @@ class PollWorker(QtCore.QObject):
             except:
                 pass
             return
-        # resp = self.client.send("wAG0;SQ0;SM0;")
-        cmd = "w"
-        for req in cyclicRefreshParams:
-            cmd += req + ';'
-        # print(cmd)
+        
+        cmd = ''
+        expectedLines = 0
+
+        for param in cyclicRefreshParams:
+            # jeśli mamy aktywne TX i komenda ma być blokowana podczas nadawania — pomiń ją
+            if getattr(self, "tx_active", 0) == 1 and param.get('block_on_tx', False):
+                continue
+
+            cmd += param['cmd'] + ' '
+            expectedLines += param['respLines']
+
+        cmd += '\n'
+        print(cmd)
+
         resp = self.client.send(cmd)
 
         if not resp:
@@ -390,22 +435,44 @@ class PollWorker(QtCore.QObject):
             else:
                 self.retry_cnt += 1
             return
-        elif "-" in resp and not 'IS0' in resp:
-            # print("-20")
+        elif "RPRT -" in resp:
+            self.status.emit(f"Error: " + resp)
             if self.retry_cnt > MAX_RETRY_CNT:
-                self._timer.setInterval(9999999)
+                # self._timer.setInterval(10000)
                 self.status.emit(f"Polling stopped")
             else:
                 self.retry_cnt += 1
         else:
             self.retry_cnt = 0
             if self._timer.interval() != self.poll_ms:
-                self._timer.setInterval(self.poll_ms)  # wróć do normalnego
+                self._timer.setInterval(self.poll_ms)
 
-        resps = resp.replace('\x00', '').replace('\n', '').split(";")
-        # print(resps)
+        respLines = resp.split('\n')
+        print(respLines)
+
+        if len(respLines) != expectedLines:
+            self.status.emit("Wrong answer - too short!")
+            return
+
+        currentLine = 0
+        for param in cyclicRefreshParams:
+            # jeśli pominięta komenda (block_on_tx i TX aktywny), nie ruszamy linii
+            if getattr(self, "tx_active", 0) == 1 and param.get('block_on_tx', False):
+                continue
+
+            answer = ''
+            for line in range(param['respLines']):
+                if answer:
+                    answer += '\n' + respLines[currentLine + line]
+                else:
+                    answer = respLines[currentLine + line]
+
+            currentLine += param['respLines']
+            self.result.emit(param['parser'], answer)
+
+
         ok_any = False
-
+        return 
         # Parsing response
         if len(resps) > 2:
             for req in cyclicRefreshParams: 
@@ -1020,7 +1087,7 @@ class MainWindow(QtWidgets.QMainWindow):
         windowWidth = int(WINDOW_WIDTH_PERCENTAGE / 100 * sizeObject.width())
         windowHeight = int(WINDOW_HEIGHT_PERCENTAGE / 100 * sizeObject.height())
         windowHeight = 400
-        self.setGeometry(0, sizeObject.height() - windowHeight, windowWidth, windowHeight)
+        self.setGeometry(int((sizeObject.width() - windowWidth) / 2), sizeObject.height() - windowHeight, windowWidth, windowHeight)
 
         # self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowIcon(QIcon("logo.ico"))
@@ -1397,6 +1464,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Radio buttons
         self.antenna_1 = QtWidgets.QRadioButton(ANTENNA_1_NAME)
         self.antenna_2 = QtWidgets.QRadioButton(ANTENNA_2_NAME)
+        self.antenna_3 = QtWidgets.QRadioButton(ANTENNA_3_NAME)
 
         # Domyślne zaznaczenie
         self.antenna_1.setChecked(True)
@@ -1404,11 +1472,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # Dodajemy przyciski do layoutu pionowego
         antenna_layout.addWidget(self.antenna_1)
         antenna_layout.addWidget(self.antenna_2)
+        antenna_layout.addWidget(self.antenna_3)
 
         # Grupa przycisków (jednokrotny wybór)
         self.antenna_switch_group = QtWidgets.QButtonGroup(self)
         self.antenna_switch_group.addButton(self.antenna_1)
         self.antenna_switch_group.addButton(self.antenna_2)
+        self.antenna_switch_group.addButton(self.antenna_3)
 
         # Po zmianie wyboru wywołaj funkcję
         self.antenna_switch_group.buttonClicked.connect(self.antenna_switch_changed)
@@ -1577,7 +1647,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.moveToThread(self.thread)
 
         self.thread.started.connect(self.worker.start)
-        self.worker.result.connect(self.update_value)
+        self.worker.result.connect(self.call_parser)
         self.worker.status.connect(self.status.showMessage)
         self.pause_polling.connect(self.worker.pause)
         self.resume_polling.connect(self.worker.resume)
@@ -1588,6 +1658,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tuner_status.singleClicked.connect(self.set_tuner)
         self.tuner_status.doubleClicked.connect(self.tuning_start)
         self.send_tx_signal.connect(self.tx_action)
+        self.send_tx_signal.connect(self.worker.tx_action)
         self.send_fst_signal.connect(self.fst_action)
         self.tx_power_btn.clicked.connect(self.set_tx_power)
         self.sound_finished.connect(self._on_sound_finished)
@@ -1605,8 +1676,191 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.client = RigctlClient(HOST, PORT, timeout=TCP_TIMEOUT)
 
+    def parse_af_gain(self, val):
+        if val is not None:
+            if not self.knob_volume.user_active:
+                val = float(val)
+                vol = int(val/1 * 100)
+                self.current_vol = vol
+                self.knob_volume.set_value(vol)
+
+    def parse_sql_lvl(self, val):
+            if val is not None:
+                if not self.knob_squelch.user_active:
+                    val = float(val)
+                    sql = int(val/1 * 100)
+                    self.current_sql = sql
+                    self.knob_squelch.set_value(sql)
+
+    def parse_strength(self, val):
+        if val is not None:
+            self.s_meter.setRange(0, 100)
+            val = float(val)
+
+            scale = (val + 60) * 100.0 / 120.0
+            smeter = int(max(0, min(100, scale)))
+        
+            self.s_meter.setValue(smeter)
+            s_label = self.s_meter_label(smeter)
+            self.s_meter.setFormat(f"S: {s_label:>7}")
+
+    def parse_rf_power_meter(self, val):
+        if val is not None:
+            self.po_meter.setRange(0, 100)
+            val = float(val)
+            rf_power = int(val / 1 * 100)
+            self.po_meter.setValue(rf_power)
+            po_label = rf_power
+            self.po_meter.setFormat(f"PO: {po_label:>6}")
+
+    def parse_alc(self, val):
+        if val is not None:
+            self.alc_meter.setRange(0, 100)
+            val = float(val)
+            alc = int(val / 1 * 100)
+            self.alc_meter.setValue(alc)
+            alc_label = alc
+            self.alc_meter.setFormat(f"ALC: {alc_label:>5}")
+
+    def parse_swr(self, val):
+        if val is not None:
+            self.swr_meter.setRange(0, 100)
+            val = float(val)
+            swr = int(val / 5 * 100) # TODO: change magic number
+            
+            self.swr_meter.setValue(swr)
+            swr = f"{swr:1f}"
+            self.swr_meter.setFormat(f"SWR: {swr:>5}")
+
+    def parse_powerstat(self, val):
+        if val is not None:
+            self.client.trx_power_status = val
+            if val:
+                self.power_btn.setText("OFF")
+                self.power_btn.setStyleSheet("border-radius: 14px; background-color: #fa6060; border: 1px solid black;")
+            else:
+                # TODO: all values can be zeroed
+                self.power_btn.setText("ON")
+                self.power_btn.setStyleSheet("border-radius: 14px; background-color: #60fa60; border: 1px solid black;")
+
+    def parse_freq(self, val):
+        pass
+
+    def parse_vfoa(self, val):
+        if val is not None:
+            valLines = val.split('\n')
+            print(valLines)
+            val = int(valLines[0])
+            self.mode = valLines[1]
+            self.filter_width = int(valLines[2])
+            self.vfoa_freq = val
+            if not self.active_vfo:
+                self.set_frequency_label(self.freq_display, val)
+                self.current_freq = self.vfoa_freq
+                self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode_label.text())
+                self.active_vfo_label.setText("VFO A")
+            else:
+                self.set_frequency_label(self.freq_display_sub, val)
+
+    def parse_vfob(self, val):
+        if val is not None:
+            valLines = val.split('\n')
+            print(valLines)
+            val = int(valLines[0])
+            self.mode = valLines[1]
+            self.filter_width = int(valLines[2])
+            self.vfob_freq = val
+            if self.active_vfo:
+                self.set_frequency_label(self.freq_display, val)
+                self.current_freq = self.vfob_freq
+                self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode_label.text())
+                self.active_vfo_label.setText("VFO B")
+            else:
+                self.set_frequency_label(self.freq_display_sub, val)
+
+    def parse_rf_power(self, val):
+        if val is not None:
+            val = float(val)
+            power = int(val / 1 * 100) # TODO: magic number
+            self.tx_power_btn.setText(str(power) + "W")
+
+    def parse_tuner(self, val):
+        if val is not None:
+            val = int(val)
+            if val:
+                self.tuner_status.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.tuner_status_val = 1
+            else:
+                self.tuner_status.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.tuner_status_val = 0
+
+    def parse_tx(self, val):
+        if val is not None:
+            val = int(val)
+            if val:
+                self.tx_active = 1
+                self.centralWidget().setStyleSheet("background-color: red;")
+                temp = self.windowTitle()
+                if not "[TX]" in temp:
+                    self.setWindowTitle("[TX] " + temp)
+                # self.replace_s_meter_when_tx(1)
+            else:
+                self.tx_active = 0
+                self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
+                self.centralWidget().setStyleSheet("")
+                # self.replace_s_meter_when_tx(0)
+    
+    def parse_preamp(self, val):
+        if val is not None:
+            if val == '10': # TODO: magic number
+                self.ipo_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.ipo_val = 1
+            else:
+                self.ipo_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.ipo_val = 0
+
+    def parse_vfo(self, val):
+        if val is not None:
+            if val == 'VFOA':
+                self.active_vfo = 0
+            elif val == 'VFOB':
+                self.active_vfo = 1
+
+    def parse_nb(self, val):
+        pass
+
+    def parse_mon(self, val):
+        pass
+
+    def parse_if(self, val):
+        pass
+
+    def parse_mn(self, val):
+        pass
+
+    def parse_notchf(self, val):
+        pass
+
+    def parse_u_nr(self, val):
+        pass
+
+    def parse_l_nr(self, val):
+        pass
+
+    def parse_att(self, val):
+        pass
+
     @QtCore.pyqtSlot(str, object)
-    def update_value(self, key, val):
+    def call_parser(self, key, val):
+
+        # print(key)
+        # print(val)
+
+        parser = getattr(MainWindow, key)
+        parser(self, val)
+
+        return
+
         if self.ignore_next_data_switch:
             if self.ignore_next_data_cnt:
                 # Do it only for one time
@@ -1937,10 +2191,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def band_down_btn_clicked(self):
         cmd = f"G BAND_DOWN"
         self.client.send(cmd)
+        self.waterfall_widget.initial_zoom_set = False
 
     def band_up_btn_clicked(self):
         cmd = f"G BAND_UP"
         self.client.send(cmd)
+        print(cmd)
         self.waterfall_widget.initial_zoom_set = False
 
     def a_eq_b_btn_clicked(self):
@@ -2141,6 +2397,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Send disable tx with delay because of delay in mumble
             QTimer.singleShot(TX_OFF_DELAY, self.disable_tx)
             self.tx_sent = 0
+        print('tx action')
 
     @QtCore.pyqtSlot(int)
     def fst_action(self, val: int):
@@ -2171,6 +2428,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.switch_antenna('1')
             elif self.antenna_2.isChecked():
                 self.switch_antenna('2')
+            elif self.antenna_3.isChecked():
+                self.switch_antenna('3')
         else:
             print("Cannot change antenna when TX")
 
