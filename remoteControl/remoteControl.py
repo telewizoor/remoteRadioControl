@@ -156,17 +156,19 @@ cyclicRefreshParams = [
     {'cmd': '\\get_vfo_info VFOA', 'respLines': 5, 'parser': 'parse_vfoa'},
     {'cmd': '\\get_vfo_info VFOB', 'respLines': 5, 'parser': 'parse_vfob'},
     {'cmd': 'l RFPOWER', 'respLines': 1, 'parser': 'parse_rf_power'},
-    {'cmd': 'u TUNER', 'respLines': 1, 'parser': 'parse_tuner'},
+    {'cmd': 'u TUNER', 'respLines': 1, 'parser': 'parse_tuner', 'oneTime': True},
     {'cmd': 't', 'respLines': 1, 'parser': 'parse_tx'},
-    {'cmd': 'l PREAMP', 'respLines': 1, 'parser': 'parse_preamp', 'block_on_tx': True},
+    {'cmd': 'l PREAMP', 'respLines': 1, 'parser': 'parse_preamp', 'oneTime': True},
     {'cmd': 'v', 'respLines': 1, 'parser': 'parse_vfo'},
-    {'cmd': 'u NB', 'respLines': 1, 'parser': 'parse_nb'},
-    {'cmd': 'u MON', 'respLines': 1, 'parser': 'parse_mon'},
-    {'cmd': 'l IF', 'respLines': 1, 'parser': 'parse_if'},
-    {'cmd': 'u MN', 'respLines': 1, 'parser': 'parse_mn', 'block_on_tx': True},
-    {'cmd': 'l NOTCHF', 'respLines': 1, 'parser': 'parse_notchf', 'block_on_tx': True},
-    {'cmd': 'u NR', 'respLines': 1, 'parser': 'parse_u_nr', 'block_on_tx': True},
-    {'cmd': 'l NR', 'respLines': 1, 'parser': 'parse_l_nr', 'block_on_tx': True},
+    {'cmd': 'u NB', 'respLines': 1, 'parser': 'parse_nb', 'oneTime': True},
+    {'cmd': 'u MON', 'respLines': 1, 'parser': 'parse_mon', 'oneTime': True},
+    {'cmd': 'l IF', 'respLines': 1, 'parser': 'parse_if', 'oneTime': True},
+    {'cmd': 'u MN', 'respLines': 1, 'parser': 'parse_mn', 'oneTime': True},
+    {'cmd': 'l NOTCHF', 'respLines': 1, 'parser': 'parse_notchf', 'oneTime': True},
+    {'cmd': 'u NR', 'respLines': 1, 'parser': 'parse_u_nr', 'oneTime': True},
+    {'cmd': 'l NR', 'respLines': 1, 'parser': 'parse_l_nr', 'oneTime': True},
+    {'cmd': 'l ATT', 'respLines': 1, 'parser': 'parse_att', 'oneTime': True},
+    # {'cmd': 'wRA0;', 'respLines': 1, 'parser': 'parse_att'},
     # {'cmd': 'wRA0;', 'respLines': 1, 'parser': 'parse_att'},
 ]
 
@@ -361,8 +363,9 @@ class ListDialog(QtWidgets.QDialog):
         self.label.setText(f"Action set: {self.combo.currentText()}")
 
 class PollWorker(QtCore.QObject):
-    result = QtCore.pyqtSignal(str, object)  # key, value
+    result = QtCore.pyqtSignal(object)  # key, value
     status = QtCore.pyqtSignal(str)
+    reset_one_time = QtCore.pyqtSignal(str)   # argument: cmd
 
     def __init__(self, host: str, port: int, poll_ms: int = POLL_MS):
         super().__init__()
@@ -371,6 +374,8 @@ class PollWorker(QtCore.QObject):
         self._timer = None
         self.retry_cnt = 0
         self.tx_active = 0
+        self.one_time_done = set()
+        self.reset_one_time.connect(self.on_reset_one_time)
 
     @QtCore.pyqtSlot()
     def start(self):
@@ -404,6 +409,14 @@ class PollWorker(QtCore.QObject):
         else:
             self.tx_active = 0
 
+    @QtCore.pyqtSlot(str)
+    def on_reset_one_time(self, cmd: str):
+        """Pozwala ponownie wykonać pojedynczy odczyt polecenia oneTime."""
+        if cmd in self.one_time_done:
+            print(f"[oneTime] Reset: {cmd}")
+            self.one_time_done.remove(cmd)
+
+
     def poll_all(self):
         if not self.client.connected:
             try:
@@ -413,84 +426,66 @@ class PollWorker(QtCore.QObject):
             return
         
         cmd = ''
-        expectedLines = 0
 
         for param in cyclicRefreshParams:
-            # jeśli mamy aktywne TX i komenda ma być blokowana podczas nadawania — pomiń ją
-            if getattr(self, "tx_active", 0) == 1 and param.get('block_on_tx', False):
+            command = param['cmd']
+            is_one_time = param.get('oneTime', False)
+
+            # pomijamy oneTime, jeśli już wykonane
+            if is_one_time and command in self.one_time_done:
                 continue
 
-            cmd += param['cmd'] + ' '
-            expectedLines += param['respLines']
+            # pomijamy przy TX (opcjonalnie)
+            if getattr(self, "tx_active", 0) == 1 and is_one_time:
+                continue
+
+            # dodajemy komendę do zestawu
+            cmd += '+' + command + ' '
 
         cmd += '\n'
         print(cmd)
 
         resp = self.client.send(cmd)
+        # print(resp)
 
         if not resp:
             self.status.emit(f"No answer from {HOST}:{PORT}")
             if self.retry_cnt > MAX_RETRY_CNT:
-                self._timer.setInterval(SLOWER_POLL_MS)
+                self._timer.setInterval(POLL_MS)
             else:
                 self.retry_cnt += 1
             return
-        elif "RPRT -" in resp:
-            self.status.emit(f"Error: " + resp)
-            if self.retry_cnt > MAX_RETRY_CNT:
-                # self._timer.setInterval(10000)
-                self.status.emit(f"Polling stopped")
+
+        parts = re.split(r'(RPRT [+-]?\d+)', resp)
+
+        respArray = []
+        tmp = ""
+
+        for part in parts:
+            if re.match(r'RPRT [+-]?\d+', part):
+                # to jest końcowy znacznik -> dodaj do aktualnego bloku i zamknij blok
+                tmp += part + "\n"
+                respArray.append(tmp)
+                tmp = ""
             else:
-                self.retry_cnt += 1
-        else:
-            self.retry_cnt = 0
-            if self._timer.interval() != self.poll_ms:
-                self._timer.setInterval(self.poll_ms)
+                # część danych
+                tmp += part
 
-        respLines = resp.split('\n')
-        print(respLines)
+        # usuwamy puste elementy
+        respArray =  [b for b in respArray if b.strip()]
 
-        if len(respLines) != expectedLines:
-            self.status.emit("Wrong answer - too short!")
-            return
+        print(respArray)
 
-        currentLine = 0
+        self.result.emit(respArray)
+
+        # oznaczamy oneTime jako wykonane
         for param in cyclicRefreshParams:
-            # jeśli pominięta komenda (block_on_tx i TX aktywny), nie ruszamy linii
-            if getattr(self, "tx_active", 0) == 1 and param.get('block_on_tx', False):
-                continue
+            if param.get('oneTime', False):
+                cmd = param['cmd']
+                if cmd not in self.one_time_done:
+                    self.one_time_done.add(cmd)
 
-            answer = ''
-            for line in range(param['respLines']):
-                if answer:
-                    answer += '\n' + respLines[currentLine + line]
-                else:
-                    answer = respLines[currentLine + line]
-
-            currentLine += param['respLines']
-            self.result.emit(param['parser'], answer)
-
-
-        ok_any = False
         return 
-        # Parsing response
-        if len(resps) > 2:
-            for req in cyclicRefreshParams: 
-                try:
-                    val = int(next((s for s in resps if req in s), None).replace(req, ''))
-                    # print(req + ' = ' + str(val))
-                    self.result.emit(req, val)
-                    ok_any = True
-                except:
-                    pass
-        else:
-            self.status.emit(f"No answer from {HOST}:{PORT}")
-            self.result.emit("PS", 0)
-            return
-
-        if ok_any:
-            self.status.emit(f"Connected with {HOST}:{PORT}")
-            pass
 
 class DoubleClickButton(QtWidgets.QPushButton):
     singleClicked = QtCore.pyqtSignal()
@@ -1275,6 +1270,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
         self.current_freq = 14074000  # Hz (odczyt z rigctld)
+        self.vfoa_freq = self.current_freq
+        self.vfob_freq = self.current_freq
 
         self.knob_squelch = BigKnob("Squelch", size=SMALL_KNOB_SIZE)
         self.knob_squelch.dial.setNotchTarget(20.0)
@@ -1647,7 +1644,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.moveToThread(self.thread)
 
         self.thread.started.connect(self.worker.start)
-        self.worker.result.connect(self.call_parser)
+        self.worker.result.connect(self.parse_hamlib_response)
         self.worker.status.connect(self.status.showMessage)
         self.pause_polling.connect(self.worker.pause)
         self.resume_polling.connect(self.worker.resume)
@@ -1693,16 +1690,75 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.knob_squelch.set_value(sql)
 
     def parse_strength(self, val):
-        if val is not None:
-            self.s_meter.setRange(0, 100)
-            val = float(val)
+        """
+        Surowy odczyt poziomu sygnału (0–255) → dB → 0..100% → etykieta S.
+        Prosta interpolacja na podstawie FT450_STR_CAL.
+        """
 
-            scale = (val + 60) * 100.0 / 120.0
-            smeter = int(max(0, min(100, scale)))
-        
-            self.s_meter.setValue(smeter)
-            s_label = self.s_meter_label(smeter)
-            self.s_meter.setFormat(f"S: {s_label:>7}")
+        # --- zabezpieczenie ---
+        try:
+            raw = float(val)
+        except:
+            raw = 0.0
+
+        # --- kalibracja FT450 (raw → dB) ---
+        # FT450_STR_CAL { {10,-60}, {125,0}, {240,60} }
+        cal = [(10, -60), (125, 0), (240, 60)]
+
+        # jeżeli poniżej pierwszego punktu
+        if raw <= cal[0][0]:
+            db = cal[0][1]
+
+        # pomiędzy punktami
+        elif raw <= cal[1][0]:
+            # interpolacja 10 → 125  ;  -60 → 0
+            r1, d1 = cal[0]
+            r2, d2 = cal[1]
+            frac = (raw - r1) / (r2 - r1)
+            db = d1 + frac * (d2 - d1)
+
+        elif raw <= cal[2][0]:
+            # interpolacja 125 → 240 ;  0 → +60
+            r1, d1 = cal[1]
+            r2, d2 = cal[2]
+            frac = (raw - r1) / (r2 - r1)
+            db = d1 + frac * (d2 - d1)
+
+        # powyżej 240
+        else:
+            db = cal[2][1]
+
+        db = int(val)
+
+        # --- procent do widgetu 0..100 ---
+        # -60 dB → 0, +60 dB → 100
+        pct = int((db + 60) / 120 * 100)
+        pct = max(0, min(100, pct))
+
+
+
+        # --- etykieta S ---
+        # S9 = 0 dB
+        # 6 dB = 1 S-unit
+        if db < -54:      # poniżej S1
+            label = "S0"
+        elif db < 0:      # S1..S9
+            s = int(9 + db / 6)
+            s = max(0, min(9, s))
+            label = f"S{s}"
+        else:
+            # nad S9 → +10, +20, +40...
+            extra = int((db + 5) // 10 * 10)   # zaokrąglanie do 10 dB
+            label = f"+{extra}"
+
+        if not self.tx_active:
+            self.s_meter.setRange(0, 100)
+            self.s_meter.setValue(pct)
+            self.s_meter.setFormat(f"S: {label:>5}")
+
+        # (opcjonalnie) zwróć wartości do debug
+        return {"raw": raw, "db": db, "pct": pct, "label": label}
+
 
     def parse_rf_power_meter(self, val):
         if val is not None:
@@ -1726,14 +1782,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if val is not None:
             self.swr_meter.setRange(0, 100)
             val = float(val)
-            swr = int(val / 5 * 100) # TODO: change magic number
+            swr = int((val-1) / 5 * 100) # TODO: change magic number (5 as max)
             
             self.swr_meter.setValue(swr)
-            swr = f"{swr:1f}"
-            self.swr_meter.setFormat(f"SWR: {swr:>5}")
+            swr = f"{val:1.1f}"
+            self.swr_meter.setFormat(f"SWR: {swr:>3}")
 
     def parse_powerstat(self, val):
         if val is not None:
+            val = val.split('get_powerstat:\nPower Status: ')[1].split('\n')[0]
+            val = int(val)
             self.client.trx_power_status = val
             if val:
                 self.power_btn.setText("OFF")
@@ -1745,38 +1803,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def parse_freq(self, val):
         pass
-
-    def parse_vfoa(self, val):
-        if val is not None:
-            valLines = val.split('\n')
-            print(valLines)
-            val = int(valLines[0])
-            self.mode = valLines[1]
-            self.filter_width = int(valLines[2])
-            self.vfoa_freq = val
-            if not self.active_vfo:
-                self.set_frequency_label(self.freq_display, val)
-                self.current_freq = self.vfoa_freq
-                self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode_label.text())
-                self.active_vfo_label.setText("VFO A")
-            else:
-                self.set_frequency_label(self.freq_display_sub, val)
-
-    def parse_vfob(self, val):
-        if val is not None:
-            valLines = val.split('\n')
-            print(valLines)
-            val = int(valLines[0])
-            self.mode = valLines[1]
-            self.filter_width = int(valLines[2])
-            self.vfob_freq = val
-            if self.active_vfo:
-                self.set_frequency_label(self.freq_display, val)
-                self.current_freq = self.vfob_freq
-                self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode_label.text())
-                self.active_vfo_label.setText("VFO B")
-            else:
-                self.set_frequency_label(self.freq_display_sub, val)
 
     def parse_rf_power(self, val):
         if val is not None:
@@ -1796,19 +1822,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def parse_tx(self, val):
         if val is not None:
-            val = int(val)
+            ptt = val.split('get_ptt:\nPTT: ')[1].split('\n')[0]
+            val = int(ptt)
             if val:
                 self.tx_active = 1
                 self.centralWidget().setStyleSheet("background-color: red;")
                 temp = self.windowTitle()
                 if not "[TX]" in temp:
                     self.setWindowTitle("[TX] " + temp)
-                # self.replace_s_meter_when_tx(1)
+                self.replace_s_meter_when_tx(1)
             else:
                 self.tx_active = 0
                 self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
                 self.centralWidget().setStyleSheet("")
-                # self.replace_s_meter_when_tx(0)
+                self.replace_s_meter_when_tx(0)
     
     def parse_preamp(self, val):
         if val is not None:
@@ -1821,16 +1848,31 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def parse_vfo(self, val):
         if val is not None:
-            if val == 'VFOA':
+            vfo = val.split('get_vfo:\nVFO: ')[1].split('\n')[0]
+            if vfo == 'VFOA':
                 self.active_vfo = 0
-            elif val == 'VFOB':
+            elif vfo == 'VFOB':
                 self.active_vfo = 1
 
     def parse_nb(self, val):
-        pass
+        if val is not None:
+            val = int(val)
+            if val:
+                self.nb_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.nb_active = 1
+            else:
+                self.nb_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.nb_active = 0
 
     def parse_mon(self, val):
-        pass
+        if val is not None:
+            val = int(val)
+            if val == 0:
+                self.monitor_active = 0
+                self.monitor_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+            elif val == 1:
+                self.monitor_active = 1
+                self.monitor_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
 
     def parse_if(self, val):
         pass
@@ -1848,16 +1890,153 @@ class MainWindow(QtWidgets.QMainWindow):
         pass
 
     def parse_att(self, val):
-        pass
+        if val is not None:
+            val = int(val)
+            if val:
+                self.att_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.att_val = 1
+            else:
+                self.att_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.att_val = 0
 
-    @QtCore.pyqtSlot(str, object)
-    def call_parser(self, key, val):
+    def parse_raw(self, val):
+        param = val.split('send_cmd: ')[1].split(';')[0]
+        param_value = val.split('Reply: ' + param)[1].split(';')[0]
+
+        parser_name = self.find_parser_for_raw(param)
+        if parser_name is None:
+            print(f"No parser available for raw({param})")
+            return
+
+        # pobierz funkcję metody z self
+        parser_fn = getattr(self, parser_name, None)
+        if parser_fn is None:
+            print(f"Parser function {parser_name} not found!")
+            return
+
+        # wywołaj dedykowany parser
+        parser_fn(param_value)
+
+    def find_parser_for_raw(self, param):
+        for item in cyclicRefreshParams:
+            if item['cmd'].startswith('w') and param in item['cmd'].split('w')[1]:
+                return item['parser']
+        return None
+    
+    def find_parser_for_get_level(self, param):
+        for item in cyclicRefreshParams:
+            if item['cmd'].startswith('l ') and item['cmd'].split(' ')[1] == param:
+                return item['parser']
+        return None
+    
+    def find_parser_for_get_func(self, param):
+        for item in cyclicRefreshParams:
+            if item['cmd'].startswith('u ') and item['cmd'].split(' ')[1] == param:
+                return item['parser']
+        return None
+
+    def parse_get_level(self, val):
+        param = val.split(': ')[1].split('\n')[0]
+        param_value = val.split(param + '\n')[1].split('\n')[0]
+
+        parser_name = self.find_parser_for_get_level(param)
+        if parser_name is None:
+            print(f"No parser available for get_level({param})")
+            return
+
+        # pobierz funkcję metody z self
+        parser_fn = getattr(self, parser_name, None)
+        if parser_fn is None:
+            print(f"Parser function {parser_name} not found!")
+            return
+
+        # wywołaj dedykowany parser
+        parser_fn(param_value)
+
+    def parse_get_func(self, val):
+        param = val.split(': ')[1].split('\n')[0]
+        param_value = val.split(param + '\n')[1].split('\n')[0]
+
+        parser_name = self.find_parser_for_get_func(param)
+        if parser_name is None:
+            print(f"No parser available for get_func({param})")
+            return
+
+        # pobierz funkcję metody z self
+        parser_fn = getattr(self, parser_name, None)
+        if parser_fn is None:
+            print(f"Parser function {parser_name} not found!")
+            return
+
+        # wywołaj dedykowany parser
+        # print(param + '=' + param_value)
+        parser_fn(param_value)
+
+    def parse_get_vfo_info(self, val):
+        vfo = val.split('get_vfo_info: ')[1].split('\n')[0]
+        freq = int(val.split('Freq: ')[1].split('\n')[0])
+
+        # ??? Some Hamlib error
+        if freq < 0:
+            return
+
+        mode = val.split('Mode: ')[1].split('\n')[0]
+        width = int(val.split('Width: ')[1].split('\n')[0])
+        split = val.split('Split: ')[1].split('\n')[0]
+        satmode = val.split('SatMode: ')[1].split('\n')[0]
+
+        self.mode = mode
+        self.filter_width = width
+
+        if vfo == 'VFOA':
+            self.vfoa_freq = freq
+        elif vfo == 'VFOB':
+            self.vfob_freq = freq
+
+        if self.active_vfo == 0:
+            self.current_freq = self.vfoa_freq
+            self.set_frequency_label(self.freq_display, self.vfoa_freq)
+            self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode_label.text())
+            self.active_vfo_label.setText("VFO A")
+            self.set_frequency_label(self.freq_display_sub, self.vfob_freq)
+        elif self.active_vfo == 1:
+            self.current_freq = self.vfob_freq
+            self.set_frequency_label(self.freq_display, self.vfob_freq)
+            self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode_label.text())
+            self.active_vfo_label.setText("VFO B")
+            self.set_frequency_label(self.freq_display_sub, self.vfoa_freq)
+
+    @QtCore.pyqtSlot(object)
+    def parse_hamlib_response(self, val):
 
         # print(key)
         # print(val)
 
-        parser = getattr(MainWindow, key)
-        parser(self, val)
+        if self.ignore_next_data_switch:
+            if self.ignore_next_data_cnt:
+                self.ignore_next_data_cnt = self.ignore_next_data_cnt - 1
+                return
+            else:
+                self.ignore_next_data_switch = False
+
+        for resp in val:
+            if 'RPRT 0' in resp:
+                if 'get_level' in resp:
+                    self.parse_get_level(resp)
+                elif 'get_func' in resp:
+                    self.parse_get_func(resp)
+                elif 'get_vfo_info' in resp:
+                    self.parse_get_vfo_info(resp)
+                elif 'get_vfo' in resp:
+                    self.parse_vfo(resp)
+                elif 'get_ptt' in resp:
+                    self.parse_tx(resp)
+                elif 'send_cmd' in resp:
+                    self.parse_raw(resp)
+                elif 'get_powerstat' in resp:
+                    self.parse_powerstat(resp)
+            else:
+                print('Error in response: RPRT ' + resp.split('RPRT ')[0])
 
         return
 
@@ -2057,10 +2236,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         cmd = f"L IF " + str(value)
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("l IF")
 
     def notch_slider_move(self, value):
         cmd = f"L NOTCHF " + str(value)
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("l NOTCHF")
 
     def notch_checked(self, value):
         if value:
@@ -2069,6 +2250,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cmd = f"U MN 0"
         self.ignore_next_data()
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("u MN")
 
     def nr_slider_move(self, value):
         cmd = f"L NR " + str(value / 10)
@@ -2083,6 +2265,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cmd = f"U NR 0"
         self.ignore_next_data()
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("u NR")
 
     def set_frequency_label(self, label, freq):
         try:
@@ -2164,15 +2347,16 @@ class MainWindow(QtWidgets.QMainWindow):
             cmd = f"\\set_powerstat 0"
         else:
             cmd = f"\\set_powerstat 1"
-            self.pause_polling.emit(3000)
+            self.pause_polling.emit(1000)
         self.client.send(cmd)
 
     def att_btn_clicked(self):
         if self.att_val:
-            cmd = f"wRA00;"
+            cmd = f"L ATT 0"
         else:
-            cmd = f"wRA01;"
+            cmd = f"L ATT 20"
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("l ATT")
 
     def ipo_btn_clicked(self):
         if not self.ipo_val:
@@ -2180,6 +2364,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             cmd = f"L PREAMP 0"
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("l PREAMP")
 
     def ipo_att_btn_clicked(self):
         if self.att_val:
@@ -2192,11 +2377,12 @@ class MainWindow(QtWidgets.QMainWindow):
         cmd = f"G BAND_DOWN"
         self.client.send(cmd)
         self.waterfall_widget.initial_zoom_set = False
+        self.ignore_next_data()
 
     def band_up_btn_clicked(self):
         cmd = f"G BAND_UP"
         self.client.send(cmd)
-        print(cmd)
+        self.ignore_next_data()
         self.waterfall_widget.initial_zoom_set = False
 
     def a_eq_b_btn_clicked(self):
@@ -2206,6 +2392,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def vfo_switch_btn_clicked(self):
         cmd = f"G XCHG"
         self.client.send(cmd)
+        self.waterfall_widget.initial_zoom_set = False
 
     def nb_btn_clicked(self):
         if self.nb_active:
@@ -2213,6 +2400,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             cmd = f"U NB 1"
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("u NB")
 
     def monitor_btn_clicked(self):
         if self.monitor_active:
@@ -2220,6 +2408,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             cmd = f"U MON 1"
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("u MON")
 
     def split_btn_clicked(self):
         if not self.split_active:
@@ -2318,7 +2507,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.current_vol = self.knob_volume.dial.value()
             # print(self.current_vol)
-            cmd = f"L AF {self.current_vol/255:0.3f}"
+            cmd = f"L AF {self.current_vol/100:0.3f}"
             # print(cmd)
             self.client.send(cmd)
 
@@ -2340,7 +2529,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # print('not user active')
             else:
                 self.current_sql = self.knob_squelch.dial.value()
-            cmd = f"L SQL {self.current_sql/255:0.3f}"
+            cmd = f"L SQL {self.current_sql/100:0.3f}"
             self.client.send(cmd)
 
     def set_tuner(self):
@@ -2350,6 +2539,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cmd = f"U TUNER 1"
         # print(cmd)
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("u TUNER")
 
     def tuning_start(self):
         # cmd = f"wAC002;"
@@ -2396,8 +2586,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
             # Send disable tx with delay because of delay in mumble
             QTimer.singleShot(TX_OFF_DELAY, self.disable_tx)
+            self.disable_tx()
             self.tx_sent = 0
-        print('tx action')
 
     @QtCore.pyqtSlot(int)
     def fst_action(self, val: int):
