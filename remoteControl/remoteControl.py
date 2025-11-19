@@ -31,8 +31,8 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 # Connection
 HOST = "192.168.152.12"
 PORT = 4532
-POLL_MS = 50
-TCP_TIMEOUT = int(POLL_MS * 0.8)
+TCP_TIMEOUT = 0.1
+POLL_MS = 500
 SLOWER_POLL_MS = 2000
 MAX_RETRY_CNT = 3
 
@@ -371,7 +371,6 @@ class PollWorker(QtCore.QObject):
         self._timer = None
         self.retry_cnt = 0
         self.tx_active = 0
-        self.cur_param = 0
 
     @QtCore.pyqtSlot()
     def start(self):
@@ -410,48 +409,88 @@ class PollWorker(QtCore.QObject):
             try:
                 self.client = RigctlClient(HOST, PORT, timeout=TCP_TIMEOUT)
             except:
-                return
-
-        param = cyclicRefreshParams[self.cur_param]
-
-        # blokuj w TX
-        if getattr(self, "tx_active", 0) == 1 and param.get("block_on_tx", False):
-            self._next()
+                pass
             return
+        
+        cmd = ''
+        expectedLines = 0
 
-        cmd = param['cmd'] + "\n"
+        for param in cyclicRefreshParams:
+            # jeśli mamy aktywne TX i komenda ma być blokowana podczas nadawania — pomiń ją
+            if getattr(self, "tx_active", 0) == 1 and param.get('block_on_tx', False):
+                continue
+
+            cmd += param['cmd'] + ' '
+            expectedLines += param['respLines']
+
+        cmd += '\n'
+        print(cmd)
+
         resp = self.client.send(cmd)
 
         if not resp:
-            self.status.emit(f"No response for: {param['cmd']}")
-            self._next()
+            self.status.emit(f"No answer from {HOST}:{PORT}")
+            if self.retry_cnt > MAX_RETRY_CNT:
+                self._timer.setInterval(SLOWER_POLL_MS)
+            else:
+                self.retry_cnt += 1
+            return
+        elif "RPRT -" in resp:
+            self.status.emit(f"Error: " + resp)
+            if self.retry_cnt > MAX_RETRY_CNT:
+                # self._timer.setInterval(10000)
+                self.status.emit(f"Polling stopped")
+            else:
+                self.retry_cnt += 1
+        else:
+            self.retry_cnt = 0
+            if self._timer.interval() != self.poll_ms:
+                self._timer.setInterval(self.poll_ms)
+
+        respLines = resp.split('\n')
+        print(respLines)
+
+        if len(respLines) != expectedLines:
+            self.status.emit("Wrong answer - too short!")
             return
 
-        if "RPRT -" in resp:
-            self.status.emit(f"Error for {param['cmd']}: {resp}")
-            self._next()
+        currentLine = 0
+        for param in cyclicRefreshParams:
+            # jeśli pominięta komenda (block_on_tx i TX aktywny), nie ruszamy linii
+            if getattr(self, "tx_active", 0) == 1 and param.get('block_on_tx', False):
+                continue
+
+            answer = ''
+            for line in range(param['respLines']):
+                if answer:
+                    answer += '\n' + respLines[currentLine + line]
+                else:
+                    answer = respLines[currentLine + line]
+
+            currentLine += param['respLines']
+            self.result.emit(param['parser'], answer)
+
+
+        ok_any = False
+        return 
+        # Parsing response
+        if len(resps) > 2:
+            for req in cyclicRefreshParams: 
+                try:
+                    val = int(next((s for s in resps if req in s), None).replace(req, ''))
+                    # print(req + ' = ' + str(val))
+                    self.result.emit(req, val)
+                    ok_any = True
+                except:
+                    pass
+        else:
+            self.status.emit(f"No answer from {HOST}:{PORT}")
+            self.result.emit("PS", 0)
             return
 
-        # podziel odpowiedź
-        resp_lines = resp.strip().split("\n")
-
-        if len(resp_lines) != param['respLines']:
-            print(
-                f"Wrong number of lines for {param['cmd']} (expected {param['respLines']}, got {len(resp_lines)})"
-            )
-            self._next()
-            return
-
-        # emit parsera
-        self.result.emit(param['parser'], resp.strip())
-
-        self._next()
-
-    def _next(self):
-        self.cur_param = (self.cur_param + 1) % len(cyclicRefreshParams)
-
-
-
+        if ok_any:
+            self.status.emit(f"Connected with {HOST}:{PORT}")
+            pass
 
 class DoubleClickButton(QtWidgets.QPushButton):
     singleClicked = QtCore.pyqtSignal()
