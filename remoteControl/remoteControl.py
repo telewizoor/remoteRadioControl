@@ -52,6 +52,9 @@ BUTTON_COLOR = "#FFDF85"
 NOT_ACTIVE_COLOR = "lightgray"
 ACTIVE_COLOR = "lightgreen"
 
+ACTIVE_STYLE = "background-color: #4CAF50; color: white; border-radius: 4px; padding-left: 2px; padding-right: 2px;"
+INACTIVE_STYLE = "background-color: #333; color: #CCC; border-radius: 4px; padding-left: 2px; padding-right: 2px;"
+
 ROUND_BUTTON_SIZE = 40
 
 SMALL_BTN_WIDTH  = 56
@@ -60,6 +63,11 @@ SMALL_BTN_HEIGHT = 28
 BIG_KNOB_SIZE   = 50
 SMALL_KNOB_SIZE = 40
 KNOB_FONT_SIZE  = 10
+
+DSP_SLIDER_HEIGHT = 80
+
+ACTIVE_VFO_FONT = QtGui.QFont("Monospace", 12, QtGui.QFont.Bold)
+SECOND_VFO_FONT = QtGui.QFont("Monospace", 10)
 
 # Radio width
 FILTER_WIDTH_USB_NARROW = 1800
@@ -98,12 +106,14 @@ REC1_PATH = dir_path + '/recs/sp9pho_en.wav'
 REC2_PATH = dir_path + '/recs/cq_sp9pho.wav'
 
 # Antenna switch
-ANTENNA_SWITCH_ENABLED = False
+ANTENNA_SWITCH_ENABLED = True
 ANTENNA_SWITCH_PORT = 5000
 ANTENNA_1_NAME = 'Hex'
 ANTENNA_1_CMD = '1'
 ANTENNA_2_NAME = 'Dpl'
 ANTENNA_2_CMD = '2'
+ANTENNA_3_NAME = 'End'
+ANTENNA_3_CMD = '3'
 
 # Waterfall
 WS_URL = "ws://" + HOST + ":8073/ws/"
@@ -140,10 +150,37 @@ WF_THEME = [
 ]
 ### --- End of configuration --- ###
 
-cyclicRefreshParams = ['AG0', 'SQ0', 'RM0', 'RM1', 'RM4', 'RM5', 'RM6', 'PS', 'FA', 'FB', 'PC', 'AC', 'TX', 'RA0', 'PA0', 'VS', 'NB0', 'MD0', 'ML0', 'SH0', 'IS0', 'BP00']
+cyclicRefreshParams = [
+    {'cmd': 'l AF', 'respLines': 1, 'parser': 'parse_af_gain'},
+    {'cmd': 'l SQL', 'respLines': 1, 'parser': 'parse_sql_lvl'},
+    {'cmd': 'l STRENGTH', 'respLines': 1, 'parser': 'parse_strength'},
+    {'cmd': 'l RFPOWER_METER', 'respLines': 1, 'parser': 'parse_rf_power_meter'},
+    {'cmd': 'l ALC', 'respLines': 1, 'parser': 'parse_alc'},
+    {'cmd': 'l SWR', 'respLines': 1, 'parser': 'parse_swr'},
+    {'cmd': '\\get_powerstat', 'respLines': 1, 'parser': 'parse_powerstat'},
+    {'cmd': 'f', 'respLines': 1, 'parser': 'parse_freq'},
+    {'cmd': 'm', 'respLines': 1, 'parser': 'parse_freq'},
+    {'cmd': '\\get_vfo_info VFOA', 'expectedResp': 'get_vfo_info', 'parser': 'parse_vfoa', 'oneTime': True},
+    {'cmd': '\\get_vfo_info VFOB', 'expectedResp': 'get_vfo_info', 'parser': 'parse_vfob', 'oneTime': True},
+    {'cmd': 'l RFPOWER', 'respLines': 1, 'parser': 'parse_rf_power'},
+    {'cmd': 'u TUNER', 'expectedResp': 'get_func', 'parser': 'parse_tuner', 'oneTime': True},
+    {'cmd': 't', 'respLines': 1, 'parser': 'parse_tx'},
+    {'cmd': 'l PREAMP', 'expectedResp': 'get_level', 'parser': 'parse_preamp', 'oneTime': True},
+    {'cmd': 'v', 'respLines': 1, 'parser': 'parse_vfo'},
+    {'cmd': 'u NB', 'expectedResp': 'get_func', 'parser': 'parse_nb', 'oneTime': True},
+    {'cmd': 'u MON', 'expectedResp': 'get_func', 'parser': 'parse_mon', 'oneTime': True},
+    {'cmd': 'l IF', 'expectedResp': 'get_level', 'parser': 'parse_if', 'oneTime': True},
+    {'cmd': 'u MN', 'expectedResp': 'get_func', 'parser': 'parse_mn', 'oneTime': True},
+    {'cmd': 'l NOTCHF', 'expectedResp': 'get_level', 'parser': 'parse_notchf', 'oneTime': True},
+    {'cmd': 'u NR', 'expectedResp': 'get_func', 'parser': 'parse_u_nr', 'oneTime': True},
+    {'cmd': 'l NR', 'expectedResp': 'get_level', 'parser': 'parse_l_nr', 'oneTime': True},
+    {'cmd': 'l ATT', 'expectedResp': 'get_level', 'parser': 'parse_att', 'oneTime': True},
+    # {'cmd': 'wRA0;', 'respLines': 1, 'parser': 'parse_att'},
+    # {'cmd': 'wRA0;', 'respLines': 1, 'parser': 'parse_att'},
+]
 
 radioModesRx = ['', 'LSB', 'USB', 'CW', 'FM', 'AM', 'DATA-L', 'CWR', 'USER-L', 'DATA-U']
-radioModesTx = ['', 'LSB', 'USB', 'CW', 'FM', 'AM', 'CWR']
+radioModes = ['LSB', 'USB', 'CW', 'FM', 'AM']
 
 def findIndexOfString(element, matrix):
     for i in range(len(matrix)):
@@ -169,7 +206,6 @@ class RigctlClient:
             if hasattr(self, 's') :#and self.retry_cnt < MAX_RETRY_CNT:
                 self.s.settimeout(self.timeout)
                 self.s.sendall(cmd.encode("ascii", errors="ignore"))
-                # print(cmd)
                 chunks = []
                 while True:
                     try:
@@ -214,7 +250,7 @@ class BigKnob(QtWidgets.QWidget):
         self.user_active = False
 
         self.dial = QtWidgets.QDial()
-        self.dial.setRange(0, 255)
+        self.dial.setRange(0, 100)
         self.dial.setNotchesVisible(True)
         self.dial.setWrapping(False)
         self.dial.setFixedSize(size, size)   # <<< używamy parametru size
@@ -284,6 +320,14 @@ class BigKnob(QtWidgets.QWidget):
         # print(f"BigKnob: zatrzymałeś się na {self.dial.value()}")
         self.user_active = False
 
+class ClickableLabel(QtWidgets.QLabel):
+    clicked = QtCore.pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
 class SliderDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, value=5):
         super().__init__(parent)
@@ -311,31 +355,54 @@ class SliderDialog(QtWidgets.QDialog):
     def get_value(self):
         return self.slider.value()
     
-class ListDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None):
+class FrequencyDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, value=0):
         super().__init__(parent)
-        self.setWindowTitle("Choose action")
-        self.setGeometry(400, 400, 250, 120)
+        self.setWindowTitle("Set Frequency (Hz)")
+
+        # Pole tekstowe
+        self.edit = QtWidgets.QLineEdit(str(value))
+
+        # Etykieta opisu
+        label = QtWidgets.QLabel("Enter frequency (0 - 52 000 000 Hz):")
+
+        # Przycisk 'Set'
+        self.button = QtWidgets.QPushButton("Set")
+        self.button.clicked.connect(self.on_accept)
 
         layout = QtWidgets.QVBoxLayout()
-
-        self.combo = QtWidgets.QComboBox(self)
-        self.combo.addItems(["SWR", "VM1TX", "VM2TX"])
-        layout.addWidget(self.combo)
-
-        self.label = QtWidgets.QLabel("Choose from the list...", self)
-        layout.addWidget(self.label)
-
-        self.combo.currentIndexChanged.connect(self.update_label)
-
+        layout.addWidget(label)
+        layout.addWidget(self.edit)
+        layout.addWidget(self.button)
         self.setLayout(layout)
 
-    def update_label(self):
-        self.label.setText(f"Action set: {self.combo.currentText()}")
+    def on_accept(self):
+        text = self.edit.text().strip()
+
+        # sprawdzamy czy liczba
+        if not text.isdigit():
+            QtWidgets.QMessageBox.warning(self, "Error", "Please enter a valid integer number.")
+            return
+
+        value = int(text)
+
+        # sprawdzenie zakresu
+        if not (0 <= value <= 52000000):
+            QtWidgets.QMessageBox.warning(
+                self, "Error", "Frequency must be between 0 and 52,000,000 Hz."
+            )
+            return
+
+        self.accept()  # zamyka dialog jeśli OK
+
+    def get_value(self):
+        return int(self.edit.text())
+
 
 class PollWorker(QtCore.QObject):
-    result = QtCore.pyqtSignal(str, object)  # key, value
+    result = QtCore.pyqtSignal(object)  # key, value
     status = QtCore.pyqtSignal(str)
+    reset_one_time = QtCore.pyqtSignal(str)   # argument: cmd
 
     def __init__(self, host: str, port: int, poll_ms: int = POLL_MS):
         super().__init__()
@@ -343,6 +410,9 @@ class PollWorker(QtCore.QObject):
         self.poll_ms = poll_ms
         self._timer = None
         self.retry_cnt = 0
+        self.tx_active = 0
+        self.one_time_done = set()
+        self.reset_one_time.connect(self.on_reset_one_time)
 
     @QtCore.pyqtSlot()
     def start(self):
@@ -369,6 +439,21 @@ class PollWorker(QtCore.QObject):
         if self._timer and not self._timer.isActive():
             self._timer.start()
 
+    @QtCore.pyqtSlot(int)
+    def tx_action(self, val: int):
+        if val:
+            self.tx_active = 1
+        else:
+            self.tx_active = 0
+
+    @QtCore.pyqtSlot(str)
+    def on_reset_one_time(self, cmd: str):
+        """Pozwala ponownie wykonać pojedynczy odczyt polecenia oneTime."""
+        if cmd in self.one_time_done:
+            self.one_time_done.remove(cmd)
+        elif cmd == 'all':
+            self.one_time_done = set()
+
     def poll_all(self):
         if not self.client.connected:
             try:
@@ -376,54 +461,66 @@ class PollWorker(QtCore.QObject):
             except:
                 pass
             return
-        # resp = self.client.send("wAG0;SQ0;SM0;")
-        cmd = "w"
-        for req in cyclicRefreshParams:
-            cmd += req + ';'
+        
+        cmd = ''
+
+        for param in cyclicRefreshParams:
+            command = param['cmd']
+            is_one_time = param.get('oneTime', False)
+
+            # pomijamy oneTime, jeśli już wykonane
+            if is_one_time and command in self.one_time_done:
+                continue
+
+            # pomijamy przy TX (opcjonalnie)
+            if getattr(self, "tx_active", 0) == 1 and is_one_time:
+                continue
+
+            # dodajemy komendę do zestawu
+            cmd += '+' + command + ' '
+
+        cmd += '\n'
         # print(cmd)
         resp = self.client.send(cmd)
+        # print(resp)
 
         if not resp:
             self.status.emit(f"No answer from {HOST}:{PORT}")
             if self.retry_cnt > MAX_RETRY_CNT:
-                self._timer.setInterval(SLOWER_POLL_MS)
+                self._timer.setInterval(POLL_MS)
             else:
                 self.retry_cnt += 1
             return
-        elif "-" in resp and not 'IS0' in resp:
-            # print("-20")
-            if self.retry_cnt > MAX_RETRY_CNT:
-                self._timer.setInterval(9999999)
-                self.status.emit(f"Polling stopped")
+
+        parts = re.split(r'(RPRT [+-]?\d+)', resp)
+        respArray = []
+        tmp = ""
+
+        for part in parts:
+            if re.match(r'RPRT [+-]?\d+', part):
+                # to jest końcowy znacznik -> dodaj do aktualnego bloku i zamknij blok
+                tmp += part + "\n"
+                respArray.append(tmp)
+                tmp = ""
             else:
-                self.retry_cnt += 1
-        else:
-            self.retry_cnt = 0
-            if self._timer.interval() != self.poll_ms:
-                self._timer.setInterval(self.poll_ms)  # wróć do normalnego
+                # część danych
+                tmp += part
 
-        resps = resp.replace('\x00', '').replace('\n', '').split(";")
-        # print(resps)
-        ok_any = False
+        # usuwamy puste elementy
+        respArray =  [b for b in respArray if b.strip()]
+        self.result.emit(respArray)
 
-        # Parsing response
-        if len(resps) > 2:
-            for req in cyclicRefreshParams: 
-                try:
-                    val = int(next((s for s in resps if req in s), None).replace(req, ''))
-                    # print(req + ' = ' + str(val))
-                    self.result.emit(req, val)
-                    ok_any = True
-                except:
-                    pass
-        else:
-            self.status.emit(f"No answer from {HOST}:{PORT}")
-            self.result.emit("PS", 0)
-            return
-
-        if ok_any:
-            self.status.emit(f"Connected with {HOST}:{PORT}")
-            pass
+        # oznaczamy oneTime jako wykonane
+        for item in respArray:
+            if 'RPRT 0' in item:
+                for param in cyclicRefreshParams:
+                    if param.get('oneTime', False):
+                        if param.get('expectedResp') + ': ' + param.get('cmd').split(' ')[1] in item:
+                            cmd = param['cmd']
+                            if cmd not in self.one_time_done:
+                                self.one_time_done.add(cmd)
+                                # print(cmd + ' received OK')
+        return 
 
 class DoubleClickButton(QtWidgets.QPushButton):
     singleClicked = QtCore.pyqtSignal()
@@ -520,6 +617,8 @@ class WaterfallWidget(QtWidgets.QWidget):
     freq_clicked = QtCore.pyqtSignal(int)   # emitowane kiedy użytkownik kliknie/wybiera freq
     freq_hover = QtCore.pyqtSignal(int)     # emitowane kiedy porusza myszką (pozycja)
     freq_selected = QtCore.pyqtSignal(int)     # emitowane kiedy porusza myszką (pozycja)
+    new_min_db = QtCore.pyqtSignal(int)
+    adjust_waterfall = QtCore.pyqtSignal()
 
     def __init__(self, width=800, height=200, parent=None):
         super().__init__(parent)
@@ -609,11 +708,16 @@ class WaterfallWidget(QtWidgets.QWidget):
                 self.center_pos = (freq - start_freq)/(full_bw) # np.clip(self.center_pos + delta_norm, 0.0, 1.0)
 
             # waterfall levels adjustment
-            self.min_db = self.fft_avg - WATERFALL_DYNAMIC_RANGE * 0.3
-            self.max_db = self.min_db + WATERFALL_DYNAMIC_RANGE
+            self.adjustWaterfallColors()
 
             self.initial_zoom_set = True
             self.update()
+
+    @QtCore.pyqtSlot()
+    def adjustWaterfallColors(self):
+            self.min_db = self.fft_avg - WATERFALL_DYNAMIC_RANGE * 0.3
+            self.max_db = self.min_db + WATERFALL_DYNAMIC_RANGE
+            self.new_min_db.emit(int(self.min_db))
 
     def resizeEvent(self, event):
         new_size = event.size()
@@ -894,10 +998,10 @@ class WaterfallWidget(QtWidgets.QWidget):
             if self.hover_freq is not None:
                 if vis_start <= self.hover_freq <= vis_end:
                     x_h = int((self.hover_freq - vis_start) / bw * (self.width_px - 1))
-                    pen_h = QtGui.QPen(QtGui.QColor(0, 255, 255, 180), 1)   # cyjan
+                    pen_h = QtGui.QPen(QtGui.QColor(150, 255, 150, 255), 2)   # cyjan
                     painter.setPen(pen_h)
                     painter.drawLine(x_h, 0, x_h, self.height_px)
-                    painter.drawText(x_h, self.height_px - 12, f"{self.hover_freq/1000000:.4f}")
+                    painter.drawText(x_h, self.height_px - 16, f"{self.hover_freq/1000000:.4f}")
 
 class WsReceiver(threading.Thread, QtCore.QObject):
     push_row_signal = QtCore.pyqtSignal(object)
@@ -1011,6 +1115,7 @@ class MainWindow(QtWidgets.QMainWindow):
     resume_polling = QtCore.pyqtSignal()
     sound_finished = QtCore.pyqtSignal(object)
     waterfall_freq_update = QtCore.pyqtSignal(int, int, str)
+    adjust_waterfall_colors = QtCore.pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -1020,7 +1125,7 @@ class MainWindow(QtWidgets.QMainWindow):
         windowWidth = int(WINDOW_WIDTH_PERCENTAGE / 100 * sizeObject.width())
         windowHeight = int(WINDOW_HEIGHT_PERCENTAGE / 100 * sizeObject.height())
         windowHeight = 400
-        self.setGeometry(0, sizeObject.height() - windowHeight, windowWidth, windowHeight)
+        self.setGeometry(int((sizeObject.width() - windowWidth) / 2), sizeObject.height() - windowHeight - 8, windowWidth, windowHeight)
 
         # self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowIcon(QIcon("logo.ico"))
@@ -1035,6 +1140,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tx_meter = DEFAULT_TX_METER
 
         self.filter_width = FILTER_WIDTH_USB_NORMAL
+        self.current_freq = 14074000  # Hz (odczyt z rigctld)
+        self.vfoa_freq = self.current_freq
+        self.vfob_freq = self.current_freq
+        self.mode = 'USB'
 
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
@@ -1048,23 +1157,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.active_vfo_label.setText("VFO A")
         self.active_vfo = 0
 
-        # mode
-        self.mode_label = QtWidgets.QLabel()
-        self.mode_label.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
-        self.mode_label.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border: 1px solid black; border-radius: 4px;")
-        self.mode_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.mode_label.setFont(QtGui.QFont("Monospace", 10, QtGui.QFont.Bold))
-        self.mode_label.setText("USB")
+        # Radio mode
+        self.mode_labels = {}   # tu trzymamy QLabel’e dla łatwego dostępu
+        self.modes_layout = QtWidgets.QVBoxLayout()
+        self.modes_layout.addSpacing(8)
+        for mode in radioModes:
+            label = QtWidgets.QLabel(mode)
+            label.setAlignment(QtCore.Qt.AlignCenter)
+            label.setFont(QtGui.QFont("Monospace", 8))
+            label.setFixedHeight(16)
+            self.modes_layout.setSpacing(0)        # odstęp między elementami
+            self.modes_layout.setContentsMargins(0, 0, 0, 0)   # marginesy layoutu
+            # zapamiętujemy do słownika
+            self.mode_labels[mode] = label
+            # dodajemy do layoutu
+            self.modes_layout.addWidget(label)
+        self.modes_layout.addSpacing(8)
 
-        # pionowy układ dla obu
-        left_layout = QtWidgets.QVBoxLayout()
-        left_layout.setSpacing(2)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(self.active_vfo_label)
-        left_layout.addWidget(self.mode_label)
-
-        left_widget = QtWidgets.QWidget()
-        left_widget.setLayout(left_layout)
+        self.modes_widget = QtWidgets.QWidget()
+        self.modes_widget.setLayout(self.modes_layout)
+        self.update_mode_display()
 
         self.att_btn = QtWidgets.QPushButton()
         self.att_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
@@ -1082,21 +1194,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tx_power_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.tx_power_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.tx_power_btn.setText("-W")
+        self.tx_power_btn.clicked.connect(self.set_tx_power)
 
         # główna częstotliwość
-        self.freq_display = QtWidgets.QLabel("--- MHz")
-        self.freq_display.setFont(QtGui.QFont("Monospace", 12, QtGui.QFont.Bold))
+        self.freq_display = ClickableLabel("--- MHz")
+        self.freq_display.setFont(ACTIVE_VFO_FONT)
         self.freq_display.setAlignment(QtCore.Qt.AlignCenter)
+        self.freq_display.clicked.connect(self.open_frequency_dialog)
         self.set_frequency_label(self.freq_display, 0)
 
         # druga, mniejsza częstotliwość
-        self.freq_display_sub = QtWidgets.QLabel("--- kHz")
-        self.freq_display_sub.setFont(QtGui.QFont("Monospace", 10))
+        self.freq_display_sub = ClickableLabel("--- kHz")
+        self.freq_display_sub.setFont(SECOND_VFO_FONT)
         self.freq_display_sub.setAlignment(QtCore.Qt.AlignCenter)
+        self.freq_display_sub.clicked.connect(self.open_frequency_dialog)
 
         # pionowy układ dla obu częstotliwości
         freq_layout = QtWidgets.QVBoxLayout()
+        freq_layout.addWidget(QtWidgets.QLabel('VFOA:'))
         freq_layout.addWidget(self.freq_display)
+        freq_layout.addWidget(QtWidgets.QLabel('VFOB:'))
         freq_layout.addWidget(self.freq_display_sub)
 
         # żeby się ładnie trzymały razem w środku
@@ -1156,7 +1273,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # jeśli chcesz, żeby ramka miała stały rozmiar (opcjonalne)
         # self.group_freq_ctrl.setFixedSize(80, 80)
-        self.group_freq_ctrl.setContentsMargins(12,0,12,0)
+        # self.group_freq_ctrl.setContentsMargins(12,0,12,0)
 
         # przyciski (jak masz już zdefiniowane, po prostu użyj tych obiektów)
         self.btn_freq_plus_slow = QtWidgets.QPushButton("+")
@@ -1194,7 +1311,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # główny layout grupy: użyj stretchów żeby wycentrować grid pionowo
         group_layout = QtWidgets.QVBoxLayout()
-        group_layout.setContentsMargins(4, 20, 4, 8)
+        # group_layout.setContentsMargins(4, 20, 4, 8)
         group_layout.setSpacing(0)
         group_layout.addStretch(1)                  # zajmuje miejsce nad siatką
         group_layout.addLayout(freq_grid)          # siatka przycisków -> będzie wyśrodkowana
@@ -1205,27 +1322,40 @@ class MainWindow(QtWidgets.QMainWindow):
         # dodaj grupę do głównego layoutu (tam gdzie chcesz)
         # main_layout.addWidget(self.group_freq_ctrl)
 
-
-
-        self.current_freq = 14074000  # Hz (odczyt z rigctld)
-
-        self.knob_squelch = BigKnob("Squelch", size=SMALL_KNOB_SIZE)
-        self.knob_squelch.dial.setNotchTarget(20.0)
-        self.knob_squelch.dial.valueChanged.connect(self.squelch_change)
         self.last_squelch_pos = 0
-        
-        self.knob_volume = BigKnob("Volume", size=SMALL_KNOB_SIZE)
-        self.knob_volume.dial.setNotchTarget(20.0)
-        self.knob_volume.dial.valueChanged.connect(self.volume_change)
         self.last_volume_pos = 0
 
+        self.volume_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
+        self.volume_slider.setFixedHeight(DSP_SLIDER_HEIGHT)
+        self.volume_slider.setMinimum(0)
+        self.volume_slider.setMaximum(100)
+        self.volume_slider.setSingleStep(1)
+        self.volume_slider.setPageStep(1)
+        self.volume_slider.setTickInterval(10)
+        self.volume_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.volume_slider.valueChanged.connect(self.volume_change)
+
+        self.volume_group = QtWidgets.QGroupBox("Vol[99]")
+        volume_layout = QtWidgets.QVBoxLayout(self.volume_group)
+        volume_layout.addWidget(self.volume_slider)
+
+        self.squelch_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
+        self.squelch_slider.setFixedHeight(DSP_SLIDER_HEIGHT)
+        self.squelch_slider.setMinimum(0)
+        self.squelch_slider.setMaximum(100)
+        self.squelch_slider.setSingleStep(1)
+        self.squelch_slider.setPageStep(1)
+        self.squelch_slider.setTickInterval(10)
+        self.squelch_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.squelch_slider.valueChanged.connect(self.squelch_change)
+
+        self.squelch_group = QtWidgets.QGroupBox("Sql[99]")
+        squelch_layout = QtWidgets.QVBoxLayout(self.squelch_group)
+        squelch_layout.addWidget(self.squelch_slider)
+
         knobs_row = QtWidgets.QHBoxLayout()
-        # knobs_row.addWidget(self.knob_fast_freq, alignment=QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
-        # knobs_row.addWidget(self.knob_freq, alignment=QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
-
-        knobs_row.addWidget(self.knob_squelch, alignment=QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
-        knobs_row.addWidget(self.knob_volume, alignment=QtCore.Qt.AlignHCenter | QtCore.Qt.AlignBottom)
-
+        knobs_row.addWidget(self.squelch_group)
+        knobs_row.addWidget(self.volume_group)
 
         # ---- bottom buttons: teraz w 2 rzędach
         btns_layout = QtWidgets.QVBoxLayout()
@@ -1397,6 +1527,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Radio buttons
         self.antenna_1 = QtWidgets.QRadioButton(ANTENNA_1_NAME)
         self.antenna_2 = QtWidgets.QRadioButton(ANTENNA_2_NAME)
+        self.antenna_3 = QtWidgets.QRadioButton(ANTENNA_3_NAME)
 
         # Domyślne zaznaczenie
         self.antenna_1.setChecked(True)
@@ -1404,11 +1535,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # Dodajemy przyciski do layoutu pionowego
         antenna_layout.addWidget(self.antenna_1)
         antenna_layout.addWidget(self.antenna_2)
+        antenna_layout.addWidget(self.antenna_3)
 
         # Grupa przycisków (jednokrotny wybór)
         self.antenna_switch_group = QtWidgets.QButtonGroup(self)
         self.antenna_switch_group.addButton(self.antenna_1)
         self.antenna_switch_group.addButton(self.antenna_2)
+        self.antenna_switch_group.addButton(self.antenna_3)
 
         # Po zmianie wyboru wywołaj funkcję
         self.antenna_switch_group.buttonClicked.connect(self.antenna_switch_changed)
@@ -1420,8 +1553,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if ANTENNA_SWITCH_ENABLED:
             bottom_row.addWidget(antenna_group)
         bottom_row.addStretch()
-
-        DSP_SLIDER_HEIGHT = 80  # lub dowolna wysokość w px, np. 60 / 100 / 120
 
         # --- Layout poziomy dla trzech pionowych suwaków
         dsp_layout = QtWidgets.QHBoxLayout()
@@ -1510,14 +1641,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # top row
         top_row = QtWidgets.QHBoxLayout()
-        top_row.addWidget(left_widget)
-        top_row.addWidget(freq_widget)
+        top_row.addStretch()
         top_row.addWidget(right_container)
+        top_row.addStretch()
         top_row.addLayout(knobs_row)
         top_row.addStretch()
         top_row.addWidget(self.group_freq_ctrl)
         top_row.addStretch()
+        top_row.addWidget(freq_widget)
+        top_row.addStretch()
         top_row.addLayout(btns_layout)
+        top_row.addWidget(self.modes_widget)
         top_row.addStretch()
         top_row.addWidget(self.ptt_btn)
         top_row.addStretch()
@@ -1550,6 +1684,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         controls.addSpacing(20)
 
+        self.adjust_waterfall_btn = QtWidgets.QPushButton('Adjust')
+        self.adjust_waterfall_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
+        self.adjust_waterfall_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.adjust_waterfall_btn.pressed.connect(self.adjust_waterfall_btn_pressed)
+        controls.addWidget(self.adjust_waterfall_btn)
+
+        controls.addSpacing(20)
+
         controls.addWidget(QtWidgets.QLabel("Range[dB]:"))
         self.range_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.range_slider.setRange(0, 40)
@@ -1570,6 +1712,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.root.addStretch(0)
 
         self.status = self.statusBar()
+        self.status.setVisible(False)
 
         # Wątek odczytu
         self.thread = QtCore.QThread()
@@ -1577,7 +1720,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.moveToThread(self.thread)
 
         self.thread.started.connect(self.worker.start)
-        self.worker.result.connect(self.update_value)
+        self.worker.result.connect(self.parse_hamlib_response)
         self.worker.status.connect(self.status.showMessage)
         self.pause_polling.connect(self.worker.pause)
         self.resume_polling.connect(self.worker.resume)
@@ -1588,8 +1731,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tuner_status.singleClicked.connect(self.set_tuner)
         self.tuner_status.doubleClicked.connect(self.tuning_start)
         self.send_tx_signal.connect(self.tx_action)
+        self.send_tx_signal.connect(self.worker.tx_action)
         self.send_fst_signal.connect(self.fst_action)
-        self.tx_power_btn.clicked.connect(self.set_tx_power)
         self.sound_finished.connect(self._on_sound_finished)
 
         # Waterfall
@@ -1599,14 +1742,430 @@ class MainWindow(QtWidgets.QMainWindow):
         self.waterfall_widget.samp_rate = self.ws_thread.samp_rate
         self.waterfall_widget.center_freq = self.ws_thread.center_freq
         self.waterfall_widget.freq_clicked.connect(self.on_freq_clicked)
+        self.waterfall_widget.new_min_db.connect(self.on_new_min_db)
         self.waterfall_freq_update.connect(self.waterfall_widget.update_selected_freq)
         self.waterfall_freq_update.connect(self.ws_thread.send_set_frequency)
+        self.adjust_waterfall_colors.connect(self.waterfall_widget.adjustWaterfallColors)
         self.ws_thread.start()
 
         self.client = RigctlClient(HOST, PORT, timeout=TCP_TIMEOUT)
 
-    @QtCore.pyqtSlot(str, object)
-    def update_value(self, key, val):
+    def parse_af_gain(self, val):
+        if val is not None:
+            val = float(val)
+            vol = int(val/1 * 100)
+            self.current_vol = vol
+            self.volume_slider.setValue(vol)
+            self.volume_group.setTitle(f'Vol[{vol}]')
+
+    def parse_sql_lvl(self, val):
+        if val is not None:
+            val = float(val)
+            sql = int(val/1 * 100)
+            self.current_sql = sql
+            self.squelch_slider.setValue(sql)
+            self.squelch_group.setTitle(f'Sql[{sql}]')
+
+    def parse_strength(self, val):
+        """
+        Surowy odczyt poziomu sygnału (0–255) → dB → 0..100% → etykieta S.
+        Prosta interpolacja na podstawie FT450_STR_CAL.
+        """
+
+        # --- zabezpieczenie ---
+        try:
+            raw = float(val)
+        except:
+            raw = 0.0
+
+        # --- kalibracja FT450 (raw → dB) ---
+        # FT450_STR_CAL { {10,-60}, {125,0}, {240,60} }
+        cal = [(10, -60), (125, 0), (240, 60)]
+
+        db = int(val)
+
+        # --- liniowe wypełnienie paska 0..100 dla -60..+60 dB ---
+        pct = int((db + 60) / 120 * 100)
+        pct = max(0, min(100, pct))
+
+        # --- etykiety S ---
+        # S0 = -60 dB
+        # S9 = 0 dB
+        # powyżej 0 dB: +10, +20 ... do +60
+        if db < 0:
+            # Mapowanie -60..0 dB → S0..S9
+            s = int((db + 60) / 60 * 9)   # liniowo
+            s = max(0, min(9, s))
+            label = f"S{s}"
+        else:
+            # Mapowanie 0..+60 dB → +10..+60 (co 10 dB)
+            extra = (db // 10) * 10
+            extra = max(10, min(60, extra))
+            label = f"+{extra}"
+
+        if not self.tx_active:
+            self.s_meter.setRange(0, 100)
+            self.s_meter.setValue(pct)
+            self.s_meter.setFormat(f"S: {label:>5}")
+
+        return {"raw": raw, "db": db, "pct": pct, "label": label}
+
+    def parse_rf_power_meter(self, val):
+        if val is not None:
+            self.po_meter.setRange(0, 100)
+            val = float(val)
+            rf_power = int(val / 1 * 100)
+            self.po_meter.setValue(rf_power)
+            po_label = rf_power
+            self.po_meter.setFormat(f"PO: {po_label:>6}")
+
+    def parse_alc(self, val):
+        if val is not None:
+            self.alc_meter.setRange(0, 100)
+            val = float(val)
+            alc = int(val / 1 * 100)
+            self.alc_meter.setValue(alc)
+            alc_label = alc
+            self.alc_meter.setFormat(f"ALC: {alc_label:>5}")
+
+    def parse_swr(self, val):
+        if val is not None:
+            self.swr_meter.setRange(0, 100)
+            val = float(val)
+            swr = int((val-1) / 5 * 100) # TODO: change magic number (5 as max)
+            
+            self.swr_meter.setValue(swr)
+            swr = f"{val:1.1f}"
+            self.swr_meter.setFormat(f"SWR: {swr:>3}")
+
+    def parse_powerstat(self, val):
+        if val is not None:
+            val = val.split('get_powerstat:\nPower Status: ')[1].split('\n')[0]
+            val = int(val)
+            self.client.trx_power_status = val
+            if val:
+                self.power_btn.setText("OFF")
+                self.power_btn.setStyleSheet("border-radius: 14px; background-color: #fa6060; border: 1px solid black;")
+            else:
+                # TODO: all values can be zeroed
+                self.power_btn.setText("ON")
+                self.power_btn.setStyleSheet("border-radius: 14px; background-color: #60fa60; border: 1px solid black;")
+
+    def parse_freq(self, val):
+        pass
+
+    def parse_rf_power(self, val):
+        if val is not None:
+            val = float(val)
+            power = int(val / 1 * 100) # TODO: magic number
+            self.tx_power_btn.setText(str(power) + "W")
+
+    def parse_tuner(self, val):
+        if val is not None:
+            val = int(val)
+            if val:
+                self.tuner_status.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.tuner_status_val = 1
+            else:
+                self.tuner_status.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.tuner_status_val = 0
+
+    def parse_tx(self, val):
+        if val is not None:
+            ptt = val.split('get_ptt:\nPTT: ')[1].split('\n')[0]
+            val = int(ptt)
+            if val:
+                self.tx_active = 1
+                self.centralWidget().setStyleSheet("background-color: red;")
+                temp = self.windowTitle()
+                if not "[TX]" in temp:
+                    self.setWindowTitle("[TX] " + temp)
+                self.replace_s_meter_when_tx(1)
+            else:
+                self.tx_active = 0
+                self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
+                self.centralWidget().setStyleSheet("")
+                self.replace_s_meter_when_tx(0)
+    
+    def parse_preamp(self, val):
+        if val is not None:
+            if val == '10': # TODO: magic number
+                self.ipo_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.ipo_val = 1
+            else:
+                self.ipo_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.ipo_val = 0
+
+    def parse_vfo(self, val):
+        if val is not None:
+            vfo = val.split('get_vfo:\nVFO: ')[1].split('\n')[0]
+            if vfo == 'VFOA':
+                self.active_vfo = 0
+            elif vfo == 'VFOB':
+                self.active_vfo = 1
+
+    def parse_nb(self, val):
+        if val is not None:
+            val = int(val)
+            if val:
+                self.nb_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.nb_active = 1
+            else:
+                self.nb_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.nb_active = 0
+
+    def parse_mon(self, val):
+        if val is not None:
+            val = int(val)
+            if val == 0:
+                self.monitor_active = 0
+                self.monitor_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+            elif val == 1:
+                self.monitor_active = 1
+                self.monitor_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+
+    def parse_if(self, val):
+        if val is not None:
+            val = int(val)
+            self.shift_slider.setValue(val)
+
+    def parse_mn(self, val):
+        if val is not None:
+            val = int(val)
+            if val:
+                self.notch_group.setChecked(True)
+            else:
+                self.notch_group.setChecked(False)
+
+    def parse_notchf(self, val):
+        if val is not None:
+            val = int(val)
+            self.notch_slider.setValue(val)
+
+    def parse_u_nr(self, val):
+        if val is not None:
+            val = int(val)
+            if val:
+                self.nr_group.setChecked(True)
+            else:
+                self.nr_group.setChecked(False)
+
+    def parse_l_nr(self, val):
+        if val is not None:
+            val = float(val)
+            val = val * self.nr_slider.maximum()
+            val = int(val)
+            self.nr_slider.setValue(val)
+
+    def parse_att(self, val):
+        if val is not None:
+            val = int(val)
+            if val:
+                self.att_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.att_val = 1
+            else:
+                self.att_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+                self.att_val = 0
+
+    def parse_raw(self, val):
+        param = val.split('send_cmd: ')[1].split(';')[0]
+        param_value = val.split('Reply: ' + param)[1].split(';')[0]
+
+        parser_name = self.find_parser_for_raw(param)
+        if parser_name is None:
+            print(f"No parser available for raw({param})")
+            return
+
+        # pobierz funkcję metody z self
+        parser_fn = getattr(self, parser_name, None)
+        if parser_fn is None:
+            print(f"Parser function {parser_name} not found!")
+            return
+
+        # wywołaj dedykowany parser
+        parser_fn(param_value)
+
+    def find_parser_for_raw(self, param):
+        for item in cyclicRefreshParams:
+            if item['cmd'].startswith('w') and param in item['cmd'].split('w')[1]:
+                return item['parser']
+        return None
+    
+    def find_parser_for_get_level(self, param):
+        for item in cyclicRefreshParams:
+            if item['cmd'].startswith('l ') and item['cmd'].split(' ')[1] == param:
+                return item['parser']
+        return None
+    
+    def find_parser_for_get_func(self, param):
+        for item in cyclicRefreshParams:
+            if item['cmd'].startswith('u ') and item['cmd'].split(' ')[1] == param:
+                return item['parser']
+        return None
+
+    def parse_get_level(self, val):
+        param = val.split(': ')[1].split('\n')[0]
+        param_value = val.split(param + '\n')[1].split('\n')[0]
+
+        parser_name = self.find_parser_for_get_level(param)
+        if parser_name is None:
+            print(f"No parser available for get_level({param})")
+            return
+
+        # pobierz funkcję metody z self
+        parser_fn = getattr(self, parser_name, None)
+        if parser_fn is None:
+            print(f"Parser function {parser_name} not found!")
+            return
+
+        # wywołaj dedykowany parser
+        parser_fn(param_value)
+
+    def parse_get_func(self, val):
+        param = val.split(': ')[1].split('\n')[0]
+        param_value = val.split(param + '\n')[1].split('\n')[0]
+
+        parser_name = self.find_parser_for_get_func(param)
+        if parser_name is None:
+            print(f"No parser available for get_func({param})")
+            return
+
+        # pobierz funkcję metody z self
+        parser_fn = getattr(self, parser_name, None)
+        if parser_fn is None:
+            print(f"Parser function {parser_name} not found!")
+            return
+
+        # wywołaj dedykowany parser
+        # print(param + '=' + param_value)
+        parser_fn(param_value)
+
+    def parse_get_vfo_info(self, val):
+        vfo = val.split('get_vfo_info: ')[1].split('\n')[0]
+        freq = int(val.split('Freq: ')[1].split('\n')[0])
+
+        # ??? Some Hamlib error
+        if freq < 0:
+            return
+
+        mode = val.split('Mode: ')[1].split('\n')[0]
+        width = int(val.split('Width: ')[1].split('\n')[0])
+        split = val.split('Split: ')[1].split('\n')[0]
+        satmode = val.split('SatMode: ')[1].split('\n')[0]
+
+        if vfo == 'VFOA':
+            self.vfoa_freq = freq
+            self.vfoa_mode = mode
+            self.vfoa_width = width
+        elif vfo == 'VFOB':
+            self.vfob_freq = freq
+            self.vfob_mode = mode
+            self.vfob_width = width
+
+        if self.active_vfo == 0:
+            self.current_freq = self.vfoa_freq
+            self.mode = self.vfoa_mode
+            self.filter_width = self.vfoa_width
+            self.active_vfo_label.setText("VFO A")
+            self.set_frequency_label(self.freq_display, self.vfoa_freq)
+            self.set_frequency_label(self.freq_display_sub, self.vfob_freq)
+            self.freq_display.setFont(ACTIVE_VFO_FONT)
+            self.freq_display_sub.setFont(SECOND_VFO_FONT)
+        elif self.active_vfo == 1:
+            self.current_freq = self.vfob_freq
+            self.mode = self.vfob_mode
+            self.filter_width = self.vfob_width
+            self.active_vfo_label.setText("VFO B")
+            self.set_frequency_label(self.freq_display, self.vfoa_freq)
+            self.set_frequency_label(self.freq_display_sub, self.vfob_freq)
+            self.freq_display.setFont(SECOND_VFO_FONT)
+            self.freq_display_sub.setFont(ACTIVE_VFO_FONT)
+
+        self.update_mode_display()
+
+        # Filter width
+        try:
+            if globals()['FILTER_WIDTH_' + self.mode + '_WIDE'] == self.filter_width:
+                self.filter_wide.setChecked(True)
+            elif globals()['FILTER_WIDTH_' + self.mode + '_NORMAL'] == self.filter_width:
+                self.filter_normal.setChecked(True)
+            elif globals()['FILTER_WIDTH_' + self.mode + '_NARROW'] == self.filter_width:
+                self.filter_narrow.setChecked(True)
+        except:
+            pass
+        self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode)
+
+    def parse_get_freq(self, val):
+        freq = int(val.split('Frequency: ')[1].split('\n')[0])
+        self.current_freq = freq
+
+        if self.active_vfo == 0:
+            self.set_frequency_label(self.freq_display, freq)
+            self.freq_display.setFont(ACTIVE_VFO_FONT)
+            self.freq_display_sub.setFont(SECOND_VFO_FONT)
+        elif self.active_vfo == 1:
+            self.set_frequency_label(self.freq_display_sub, freq)
+            self.freq_display.setFont(SECOND_VFO_FONT)
+            self.freq_display_sub.setFont(ACTIVE_VFO_FONT)
+        self.waterfall_freq_update.emit(freq, self.filter_width, self.mode)
+
+    def parse_get_mode(self, val):
+        mode = val.split('get_mode:\nMode: ')[1].split('\n')[0]
+        width = int(val.split('\nPassband: ')[1].split('\n')[0])
+        self.mode = mode
+        self.filter_width = width
+
+        self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode)
+        self.update_mode_display()
+        # Filter width
+        try:
+            if globals()['FILTER_WIDTH_' + self.mode + '_WIDE'] == self.filter_width:
+                self.filter_wide.setChecked(True)
+            elif globals()['FILTER_WIDTH_' + self.mode + '_NORMAL'] == self.filter_width:
+                self.filter_normal.setChecked(True)
+            elif globals()['FILTER_WIDTH_' + self.mode + '_NARROW'] == self.filter_width:
+                self.filter_narrow.setChecked(True)
+        except:
+            pass
+
+    @QtCore.pyqtSlot(object)
+    def parse_hamlib_response(self, val):
+
+        # print(key)
+        # print(val)
+
+        if self.ignore_next_data_switch:
+            if self.ignore_next_data_cnt:
+                self.ignore_next_data_cnt = self.ignore_next_data_cnt - 1
+                return
+            else:
+                self.ignore_next_data_switch = False
+
+        for resp in val:
+            if 'RPRT 0' in resp:
+                if 'get_level' in resp:
+                    self.parse_get_level(resp)
+                elif 'get_func' in resp:
+                    self.parse_get_func(resp)
+                elif 'get_freq' in resp:
+                    self.parse_get_freq(resp)
+                elif 'get_mode' in resp:
+                    self.parse_get_mode(resp)
+                elif 'get_vfo_info' in resp:
+                    self.parse_get_vfo_info(resp)
+                elif 'get_vfo' in resp:
+                    self.parse_vfo(resp)
+                elif 'get_ptt' in resp:
+                    self.parse_tx(resp)
+                elif 'send_cmd' in resp:
+                    self.parse_raw(resp)
+                elif 'get_powerstat' in resp:
+                    self.parse_powerstat(resp)
+            else:
+                print('Error in response: RPRT ' + resp.split('RPRT ')[0])
+
+        return
+
         if self.ignore_next_data_switch:
             if self.ignore_next_data_cnt:
                 # Do it only for one time
@@ -1770,6 +2329,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     self.notch_group.setChecked(False)
 
+    def update_mode_display(self):
+        for mode, label in self.mode_labels.items():
+            # print(self.mode)
+            if mode == self.mode:
+                label.setStyleSheet(ACTIVE_STYLE)
+            else:
+                label.setStyleSheet(INACTIVE_STYLE)
+
     def on_min_changed(self, val):
         self.waterfall_widget.set_min_db(val)
         self.waterfall_widget.set_max_db(val + self.range_slider.value())
@@ -1791,6 +2358,9 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             print("Failed to request setfrequency:", e)
 
+    def on_new_min_db(self, new_min_db: int):
+        self.min_slider.setValue(new_min_db)
+
     def ignore_next_data(self, cnt=2):
         self.ignore_next_data_switch = True
         self.ignore_next_data_cnt = cnt
@@ -1802,11 +2372,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.shift_slider.setValue(center)
 
         cmd = f"L IF " + str(value)
+        self.ignore_next_data()
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("l IF")
 
     def notch_slider_move(self, value):
         cmd = f"L NOTCHF " + str(value)
+        self.ignore_next_data()
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("l NOTCHF")
 
     def notch_checked(self, value):
         if value:
@@ -1815,9 +2389,11 @@ class MainWindow(QtWidgets.QMainWindow):
             cmd = f"U MN 0"
         self.ignore_next_data()
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("u MN")
 
     def nr_slider_move(self, value):
         cmd = f"L NR " + str(value / 10)
+        self.ignore_next_data()
         self.client.send(cmd)
 
     def nr_checked(self, value):
@@ -1829,6 +2405,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cmd = f"U NR 0"
         self.ignore_next_data()
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("u NR")
 
     def set_frequency_label(self, label, freq):
         try:
@@ -1910,15 +2487,18 @@ class MainWindow(QtWidgets.QMainWindow):
             cmd = f"\\set_powerstat 0"
         else:
             cmd = f"\\set_powerstat 1"
+            self.power_btn.setStyleSheet("border-radius: 14px; background-color: orange; border: 1px solid black;")
             self.pause_polling.emit(3000)
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("\\get_powerstat")
 
     def att_btn_clicked(self):
         if self.att_val:
-            cmd = f"wRA00;"
+            cmd = f"L ATT 0"
         else:
-            cmd = f"wRA01;"
+            cmd = f"L ATT 20"
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("l ATT")
 
     def ipo_btn_clicked(self):
         if not self.ipo_val:
@@ -1926,6 +2506,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             cmd = f"L PREAMP 0"
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("l PREAMP")
 
     def ipo_att_btn_clicked(self):
         if self.att_val:
@@ -1936,20 +2517,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def band_down_btn_clicked(self):
         cmd = f"G BAND_DOWN"
+        self.ignore_next_data()
         self.client.send(cmd)
+        self.waterfall_widget.initial_zoom_set = False
+        self.worker.reset_one_time.emit("all")
 
     def band_up_btn_clicked(self):
         cmd = f"G BAND_UP"
+        self.ignore_next_data()
         self.client.send(cmd)
         self.waterfall_widget.initial_zoom_set = False
+        self.worker.reset_one_time.emit("all")
 
     def a_eq_b_btn_clicked(self):
         cmd = f"G CPY"
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("all")
 
     def vfo_switch_btn_clicked(self):
         cmd = f"G XCHG"
+        # self.ignore_next_data()
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("all")
+        # self.waterfall_widget.initial_zoom_set = False
 
     def nb_btn_clicked(self):
         if self.nb_active:
@@ -1957,6 +2547,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             cmd = f"U NB 1"
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("u NB")
 
     def monitor_btn_clicked(self):
         if self.monitor_active:
@@ -1964,6 +2555,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             cmd = f"U MON 1"
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("u MON")
 
     def split_btn_clicked(self):
         if not self.split_active:
@@ -1977,25 +2569,25 @@ class MainWindow(QtWidgets.QMainWindow):
         self.client.send(cmd)
 
     def mode_down_btn_clicked(self):
-        current_mode = findIndexOfString(self.mode_label.text(), radioModesRx)
+        current_mode_index = findIndexOfString(self.mode, radioModes)
 
-        if current_mode <= 1:
-            new_mode = len(radioModesTx) - 1
+        if current_mode_index >= len(radioModes) - 1:
+            new_mode = 0
         else:
-            new_mode = current_mode - 1
+            new_mode = current_mode_index + 1
 
-        cmd = f"M " + radioModesTx[new_mode] + " 0"
+        cmd = f"M " + radioModes[new_mode] + " 0"
         self.client.send(cmd)
 
     def mode_up_btn_clicked(self):
-        current_mode = findIndexOfString(self.mode_label.text(), radioModesRx)
+        current_mode_index = findIndexOfString(self.mode, radioModes)
 
-        if current_mode >= len(radioModesTx):
-            new_mode = 1
+        if current_mode_index == 0:
+            new_mode = len(radioModes) - 1
         else:
-            new_mode = current_mode + 1
+            new_mode = current_mode_index - 1
 
-        cmd = f"M " + radioModesTx[new_mode] + " 0"
+        cmd = f"M " + radioModes[new_mode] + " 0"
         self.client.send(cmd)
 
     def frequency_step(self, sign, step):
@@ -2039,52 +2631,56 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def frequency_change(self, freq):
         cmd = f"F {freq}\n"
-        self.set_frequency_label(self.freq_display, freq)
-        self.waterfall_freq_update.emit(freq, self.filter_width, self.mode_label.text())
+        if self.active_vfo == 0:
+            self.set_frequency_label(self.freq_display, freq)
+        elif self.active_vfo == 1:
+            self.set_frequency_label(self.freq_display_sub, freq)
+        self.waterfall_freq_update.emit(freq, self.filter_width, self.mode)
         self.ignore_next_data()
         self.client.send(cmd)
 
     def volume_change(self, new_pos: int):
+        if self.last_volume_pos == 0:
+            self.last_volume_pos = new_pos
+
         delta = new_pos - self.last_volume_pos
+
         if delta > 50:   # wrap forward
             delta -= 100
         elif delta < -50:  # wrap backward
             delta += 100
         self.last_volume_pos = new_pos
-        if delta >= 0:
+        if delta > 0:
             delta = 1
-        else:
+        elif delta < 0:
             delta = -1
 
         if delta != 0:
-            if not self.knob_volume.user_active:
-                self.current_vol += delta * 1   # krok 1
-            else:
-                self.current_vol = self.knob_volume.dial.value()
-            # print(self.current_vol)
-            cmd = f"L AF {self.current_vol/255:0.3f}"
-            # print(cmd)
+            self.current_vol = self.volume_slider.value()
+            self.volume_group.setTitle(f'Vol[{self.current_vol}]')
+            cmd = f"L AF {self.current_vol/100:0.3f}"
+            self.ignore_next_data()
             self.client.send(cmd)
 
     def squelch_change(self, new_pos: int):
+        if self.last_squelch_pos == 0:
+            self.last_squelch_pos = new_pos
         delta = new_pos - self.last_squelch_pos
         if delta > 50:   # wrap forward
             delta -= 100
         elif delta < -50:  # wrap backward
             delta += 100
         self.last_squelch_pos = new_pos
-        if delta >= 0:
+        if delta > 0:
             delta = 1
-        else:
+        elif delta < 0:
             delta = -1
 
         if delta != 0:
-            if not self.knob_squelch.user_active:
-                self.current_sql += delta * 1   # krok 1
-                # print('not user active')
-            else:
-                self.current_sql = self.knob_squelch.dial.value()
-            cmd = f"L SQL {self.current_sql/255:0.3f}"
+            self.current_sql = self.squelch_slider.value()
+            self.squelch_group.setTitle(f'Sql[{self.current_sql}]')
+            cmd = f"L SQL {self.current_sql/100:0.3f}"
+            self.ignore_next_data()
             self.client.send(cmd)
 
     def set_tuner(self):
@@ -2094,6 +2690,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cmd = f"U TUNER 1"
         # print(cmd)
         self.client.send(cmd)
+        self.worker.reset_one_time.emit("u TUNER")
 
     def tuning_start(self):
         # cmd = f"wAC002;"
@@ -2140,6 +2737,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
             # Send disable tx with delay because of delay in mumble
             QTimer.singleShot(TX_OFF_DELAY, self.disable_tx)
+            # self.disable_tx()
             self.tx_sent = 0
 
     @QtCore.pyqtSlot(int)
@@ -2152,16 +2750,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def filter_width_changed(self):
         if self.filter_narrow.isChecked():
-            self.filter_width = globals()['FILTER_WIDTH_' + self.mode_label.text() + '_NARROW']
+            self.filter_width = globals()['FILTER_WIDTH_' + self.mode + '_NARROW']
             # self.filter_width = FILTER_WIDTH_SSB_NARROW
         elif self.filter_normal.isChecked():
-            self.filter_width = globals()['FILTER_WIDTH_' + self.mode_label.text() + '_NORMAL']
+            self.filter_width = globals()['FILTER_WIDTH_' + self.mode + '_NORMAL']
             # self.filter_width = FILTER_WIDTH_SSB_NORMAL
         elif self.filter_wide.isChecked():
-            self.filter_width = globals()['FILTER_WIDTH_' + self.mode_label.text() + '_WIDE']
+            self.filter_width = globals()['FILTER_WIDTH_' + self.mode + '_WIDE']
             # self.filter_width = FILTER_WIDTH_SSB_WIDE
 
-        cmd = f"M " + self.mode_label.text() + " " + str(self.filter_width)
+        cmd = f"M " + self.mode + " " + str(self.filter_width)
         self.ignore_next_data()
         self.client.send(cmd)
 
@@ -2171,6 +2769,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.switch_antenna('1')
             elif self.antenna_2.isChecked():
                 self.switch_antenna('2')
+            elif self.antenna_3.isChecked():
+                self.switch_antenna('3')
         else:
             print("Cannot change antenna when TX")
 
@@ -2180,6 +2780,13 @@ class MainWindow(QtWidgets.QMainWindow):
             value = dialog.get_value()
             cmd = f"L RFPOWER {value/100:0.2f}"
             self.client.send(cmd)
+
+    def open_frequency_dialog(self):
+        dlg = FrequencyDialog(self, value=self.current_freq)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            new_freq = dlg.get_value()
+            self.frequency_change(new_freq)
+
 
     def cmb_smeter_change(self):
         if self.cmb_smeter.currentText() == 'ALC':
@@ -2199,7 +2806,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def swr_btn_pressed(self):
         self.current_power = self.tx_power_btn.text().replace('W', '')
-        self.current_mode = self.mode_label.text()
+        self.current_mode = self.mode
         cmd = f"M CW 0"
         self.client.send(cmd)
 
@@ -2262,6 +2869,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def play2_btn_pressed(self):
         self.play_sound(REC2_PATH, self.play2_btn)
+
+    def adjust_waterfall_btn_pressed(self):
+        self.adjust_waterfall_colors.emit()
 
     def closeEvent(self, event):
         self.thread.quit()
