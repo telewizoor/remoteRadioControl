@@ -114,6 +114,7 @@ ANTENNA_2_NAME = 'Dpl'
 ANTENNA_2_CMD = '2'
 ANTENNA_3_NAME = 'End'
 ANTENNA_3_CMD = '3'
+GET_ANTENNA_CMD = 'get'
 
 # Waterfall
 WS_URL = "ws://" + HOST + ":8073/ws/"
@@ -411,6 +412,7 @@ class PollWorker(QtCore.QObject):
         self._timer = None
         self.retry_cnt = 0
         self.tx_active = 0
+        self.request_sent = False
         self.one_time_done = set()
         self.reset_one_time.connect(self.on_reset_one_time)
 
@@ -453,6 +455,8 @@ class PollWorker(QtCore.QObject):
             self.one_time_done.remove(cmd)
         elif cmd == 'all':
             self.one_time_done = set()
+            self.one_time_done.add('\\get_vfo_info VFOA')
+            self.one_time_done.add('\\get_vfo_info VFOB')
 
     def poll_all(self):
         if not self.client.connected:
@@ -487,7 +491,8 @@ class PollWorker(QtCore.QObject):
         if not resp:
             self.status.emit(f"No answer from {HOST}:{PORT}")
             if self.retry_cnt > MAX_RETRY_CNT:
-                self._timer.setInterval(POLL_MS)
+                # self._timer.setInterval(SLOWER_POLL_MS)
+                pass
             else:
                 self.retry_cnt += 1
             return
@@ -508,6 +513,7 @@ class PollWorker(QtCore.QObject):
 
         # usuwamy puste elementy
         respArray =  [b for b in respArray if b.strip()]
+        # print(respArray)
         self.result.emit(respArray)
 
         # oznaczamy oneTime jako wykonane
@@ -1031,7 +1037,7 @@ class WsReceiver(threading.Thread, QtCore.QObject):
         high_freq = self.center_freq + self.samp_rate / 2
         # Change SDR frequency when current frequency is outside bandwith
         if frequency > high_freq or frequency < low_freq:
-            print('Changing SDR frequency...')
+            print('Changing SDR frequency to ' + str(frequency))
             try:
                 if self._ws and hasattr(self._ws, "send"):
                     cmd = '{"type":"setfrequency","params":{"frequency":' + str(int(frequency + self.samp_rate / 6)) + '}}' # Add offset to not tune exactly on desired freq
@@ -1127,7 +1133,7 @@ class MainWindow(QtWidgets.QMainWindow):
         windowHeight = 400
         self.setGeometry(int((sizeObject.width() - windowWidth) / 2), sizeObject.height() - windowHeight - 8, windowWidth, windowHeight)
 
-        # self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowIcon(QIcon("logo.ico"))
 
         # self.setWindowOpacity(0.8)
@@ -1530,7 +1536,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.antenna_3 = QtWidgets.QRadioButton(ANTENNA_3_NAME)
 
         # Domyślne zaznaczenie
-        self.antenna_1.setChecked(True)
+        # self.antenna_1.setChecked(True)
+        self.get_current_antenna()
 
         # Dodajemy przyciski do layoutu pionowego
         antenna_layout.addWidget(self.antenna_1)
@@ -2053,6 +2060,8 @@ class MainWindow(QtWidgets.QMainWindow):
         split = val.split('Split: ')[1].split('\n')[0]
         satmode = val.split('SatMode: ')[1].split('\n')[0]
 
+        update_needed = False
+
         if vfo == 'VFOA':
             self.vfoa_freq = freq
             self.vfoa_mode = mode
@@ -2063,6 +2072,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.vfob_width = width
 
         if self.active_vfo == 0:
+            if self.current_freq != self.vfoa_freq:
+                update_needed = True
             self.current_freq = self.vfoa_freq
             self.mode = self.vfoa_mode
             self.filter_width = self.vfoa_width
@@ -2072,6 +2083,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.freq_display.setFont(ACTIVE_VFO_FONT)
             self.freq_display_sub.setFont(SECOND_VFO_FONT)
         elif self.active_vfo == 1:
+            if self.current_freq != self.vfob_freq:
+                update_needed = True
             self.current_freq = self.vfob_freq
             self.mode = self.vfob_mode
             self.filter_width = self.vfob_width
@@ -2086,18 +2099,31 @@ class MainWindow(QtWidgets.QMainWindow):
         # Filter width
         try:
             if globals()['FILTER_WIDTH_' + self.mode + '_WIDE'] == self.filter_width:
-                self.filter_wide.setChecked(True)
+                if not self.filter_wide.isChecked():
+                    self.filter_wide.setChecked(True)
+                    update_needed = True
             elif globals()['FILTER_WIDTH_' + self.mode + '_NORMAL'] == self.filter_width:
-                self.filter_normal.setChecked(True)
+                if not self.filter_normal.isChecked():
+                    self.filter_normal.setChecked(True)
+                    update_needed = True
             elif globals()['FILTER_WIDTH_' + self.mode + '_NARROW'] == self.filter_width:
-                self.filter_narrow.setChecked(True)
+                if not self.filter_narrow.isChecked():
+                    self.filter_narrow.setChecked(True)
+                    update_needed = True
         except:
             pass
-        self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode)
+
+        if update_needed:
+            # print('parse_get_vfo_info')
+            self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode)
 
     def parse_get_freq(self, val):
         freq = int(val.split('Frequency: ')[1].split('\n')[0])
-        self.current_freq = freq
+        updated_needed = True
+
+        if freq != self.current_freq:
+            updated_needed = True
+            self.current_freq = freq
 
         if self.active_vfo == 0:
             self.set_frequency_label(self.freq_display, freq)
@@ -2107,26 +2133,45 @@ class MainWindow(QtWidgets.QMainWindow):
             self.set_frequency_label(self.freq_display_sub, freq)
             self.freq_display.setFont(SECOND_VFO_FONT)
             self.freq_display_sub.setFont(ACTIVE_VFO_FONT)
-        self.waterfall_freq_update.emit(freq, self.filter_width, self.mode)
+
+        if updated_needed:
+            # print('parse_get_freq')
+            self.waterfall_freq_update.emit(freq, self.filter_width, self.mode)
 
     def parse_get_mode(self, val):
         mode = val.split('get_mode:\nMode: ')[1].split('\n')[0]
         width = int(val.split('\nPassband: ')[1].split('\n')[0])
-        self.mode = mode
-        self.filter_width = width
+        updated_needed = False
 
-        self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode)
+        if mode != self.mode:
+            updated_needed = True
+            self.mode = mode
+            # print('mode')
+
+        if width != self.filter_width:
+            updated_needed = True
+            self.filter_width = width
+            # print('width')
+
         self.update_mode_display()
+
         # Filter width
         try:
             if globals()['FILTER_WIDTH_' + self.mode + '_WIDE'] == self.filter_width:
-                self.filter_wide.setChecked(True)
+                if not self.filter_wide.isChecked():
+                    self.filter_wide.setChecked(True)
             elif globals()['FILTER_WIDTH_' + self.mode + '_NORMAL'] == self.filter_width:
-                self.filter_normal.setChecked(True)
+                if not self.filter_normal.isChecked():
+                    self.filter_normal.setChecked(True)
             elif globals()['FILTER_WIDTH_' + self.mode + '_NARROW'] == self.filter_width:
-                self.filter_narrow.setChecked(True)
+                if not self.filter_narrow.isChecked():
+                    self.filter_narrow.setChecked(True)
         except:
             pass
+
+        if updated_needed:
+            # print('parse_get_mode')
+            self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode)
 
     @QtCore.pyqtSlot(object)
     def parse_hamlib_response(self, val):
@@ -2537,9 +2582,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def vfo_switch_btn_clicked(self):
         cmd = f"G XCHG"
         # self.ignore_next_data()
+        print('VFO SWITCH')
         self.client.send(cmd)
         self.worker.reset_one_time.emit("all")
-        # self.waterfall_widget.initial_zoom_set = False
+        self.waterfall_widget.initial_zoom_set = False
 
     def nb_btn_clicked(self):
         if self.nb_active:
@@ -2702,6 +2748,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def disable_tx(self):
         cmd = f"T 0"
         self.client.send(cmd)
+        self.client.send(cmd)
 
     def replace_s_meter_when_tx(self, tx_state):
         if self.tx_meter is SWR_METER:
@@ -2766,11 +2813,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def antenna_switch_changed(self):
         if not self.tx_active:
             if self.antenna_1.isChecked():
-                self.switch_antenna('1')
+                self.switch_antenna(ANTENNA_1_CMD)
             elif self.antenna_2.isChecked():
-                self.switch_antenna('2')
+                self.switch_antenna(ANTENNA_2_CMD)
             elif self.antenna_3.isChecked():
-                self.switch_antenna('3')
+                self.switch_antenna(ANTENNA_3_CMD)
         else:
             print("Cannot change antenna when TX")
 
@@ -2879,13 +2926,26 @@ class MainWindow(QtWidgets.QMainWindow):
         super().closeEvent(event)
 
     def switch_antenna(self, cmd, host=HOST, port=ANTENNA_SWITCH_PORT):
-        """Wysyła komendę '1' lub '2' do serwera."""
         try:
             with socket.create_connection((host, port), timeout=1) as s:
                 s.sendall(cmd.encode("ascii", errors="ignore"))
                 response = s.recv(1024).decode('utf-8').strip()
-                print("Server response:", response)
+                print("Antenna server response:", response)
                 self.status.showMessage(response)
+        except Exception as e:
+            print("Connection error:", e)
+
+    def get_current_antenna(self, host=HOST, port=ANTENNA_SWITCH_PORT):
+        try:
+            with socket.create_connection((host, port), timeout=1) as s:
+                cmd = GET_ANTENNA_CMD
+                s.sendall(cmd.encode("ascii", errors="ignore"))
+                response = s.recv(1024).decode('utf-8').strip()
+                print("Antenna server response:", response)
+                try:
+                    getattr(self, f"antenna_{response}").setChecked(True)
+                except:
+                    pass
         except Exception as e:
             print("Connection error:", e)
 
