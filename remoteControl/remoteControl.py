@@ -138,6 +138,7 @@ WATERFALL_MIN_DB_DEFAULT = -90
 WATERFALL_DYNAMIC_RANGE = 25
 
 MOUSE_WHEEL_FREQ_STEP = 100
+MOUSE_WHEEL_FAST_FREQ_STEP = 1000
 
 WATERFALL_MARGIN   = 32
 MAJOR_THICK_HEIGHT = 12
@@ -638,6 +639,7 @@ class WaterfallWidget(QtWidgets.QWidget):
 
         self.waterfall_config_received = False
         self.initial_zoom_set = False
+        self.fast_freq = False
 
     def set_min_db(self, value):
         self.min_db = int(value)
@@ -665,6 +667,10 @@ class WaterfallWidget(QtWidgets.QWidget):
                 self.waterfall_config_received = True
         # redraw labels
         self.update()
+
+    @QtCore.pyqtSlot(bool)
+    def fast_freq_update(self, val: bool):
+        self.fast_freq = val
 
     @QtCore.pyqtSlot(int, int, str)
     def update_selected_freq(self, freq, width, mode):
@@ -753,8 +759,13 @@ class WaterfallWidget(QtWidgets.QWidget):
             elif delta < 0:
                 delta = -1
 
-            self.selected_freq -= self.selected_freq % MOUSE_WHEEL_FREQ_STEP
-            self.selected_freq += delta * MOUSE_WHEEL_FREQ_STEP
+            if not self.fast_freq:
+                step = MOUSE_WHEEL_FREQ_STEP
+            else:
+                step = MOUSE_WHEEL_FAST_FREQ_STEP
+
+            self.selected_freq -= self.selected_freq % step
+            self.selected_freq += delta * step
             self.freq_clicked.emit(self.selected_freq)
 
     def mousePressEvent(self, event):
@@ -1091,6 +1102,7 @@ class MainWindow(QtWidgets.QMainWindow):
     resume_polling = QtCore.pyqtSignal()
     sound_finished = QtCore.pyqtSignal(object)
     waterfall_freq_update = QtCore.pyqtSignal(int, int, str)
+    fast_freq_status = QtCore.pyqtSignal(bool)
     adjust_waterfall_colors = QtCore.pyqtSignal()
 
     def __init__(self):
@@ -1103,7 +1115,7 @@ class MainWindow(QtWidgets.QMainWindow):
         windowHeight = 400
         self.setGeometry(int((sizeObject.width() - windowWidth) / 2), sizeObject.height() - windowHeight - 48, windowWidth, windowHeight)
 
-        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        # self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowIcon(QIcon("logo.ico"))
 
         # self.setWindowOpacity(0.8)
@@ -1264,6 +1276,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_freq_minus_slow = QtWidgets.QPushButton("-")
         self.btn_freq_minus_fast = QtWidgets.QPushButton("-\n-")
 
+        self.radio_fast_freq = QtWidgets.QCheckBox("Fast Scroll")
+        self.radio_fast_freq.clicked.connect(self.radio_fast_freq_clicked)
+
         # ustaw rozmiary i politykę rozciągania (ważne)
         for btn in [self.btn_freq_plus_slow, self.btn_freq_plus_fast,
                     self.btn_freq_minus_slow, self.btn_freq_minus_fast]:
@@ -1298,6 +1313,8 @@ class MainWindow(QtWidgets.QMainWindow):
         group_layout.setSpacing(0)
         group_layout.addStretch(1)                  # zajmuje miejsce nad siatką
         group_layout.addLayout(freq_grid)          # siatka przycisków -> będzie wyśrodkowana
+        group_layout.addSpacing(8)                  # zajmuje miejsce pod siatką
+        group_layout.addWidget(self.radio_fast_freq)
         group_layout.addStretch(1)                  # zajmuje miejsce pod siatką
 
         self.group_freq_ctrl.setLayout(group_layout)
@@ -1729,6 +1746,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.waterfall_widget.new_min_db.connect(self.on_new_min_db)
         self.waterfall_freq_update.connect(self.waterfall_widget.update_selected_freq)
         self.waterfall_freq_update.connect(self.ws_thread.send_set_frequency)
+        self.fast_freq_status.connect(self.waterfall_widget.fast_freq_update)
         self.adjust_waterfall_colors.connect(self.waterfall_widget.adjustWaterfallColors)
         self.ws_thread.start()
 
@@ -2612,6 +2630,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         cmd = f"M " + radioModes[new_mode] + " 0"
         self.client.send(cmd)
+
+    def radio_fast_freq_clicked(self):
+        self.fast_freq_status.emit(self.radio_fast_freq.isChecked())
 
     def frequency_step(self, sign, step):
         if sign > 0:
