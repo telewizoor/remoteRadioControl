@@ -7,7 +7,7 @@ const app = express();
 // Konfiguracja
 const RIGCTLD_HOST = '192.168.152.12';
 const RIGCTLD_PORT = 4532;
-const WEB_PORT = 3000;
+const WEB_PORT = 80;
 const TCP_TIMEOUT = 100;
 
 app.use(express.json());
