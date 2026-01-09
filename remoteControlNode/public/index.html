@@ -304,7 +304,7 @@
 </head>
 <body>
     <div class="container">
-        <h1 id="title">Remote Control - FT-450D</h1>
+        <h1 id="title">Remote Radio Control</h1>
 
         <div class="control-panel">
             <!-- Sekcja częstotliwości -->
@@ -665,7 +665,7 @@
             btn.classList.toggle('active', state);
             document.body.classList.toggle('tx-active', state);
             document.getElementById('title').textContent = state ? 
-                '[TX] Remote Control - FT-450D' : 'Remote Control - FT-450D';
+                '[TX] Remote Radio Control' : 'Remote Radio Control';
             
             await apiCall('/ptt', 'POST', { state: state ? 1 : 0 });
         }
