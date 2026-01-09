@@ -216,24 +216,13 @@ app.post('/api/split', async (req, res) => {
 });
 
 // Poziomy (Volume, Squelch, etc.)
+// Poziomy (Volume, Squelch, etc.)
 app.get('/api/level/:level', async (req, res) => {
     try {
         const level = req.params.level;
         const result = await sendRigCommand(`l ${level}`);
-        
-        // Parsowanie odpowiedzi z get_level
-        let value = 0;
-        if (result.includes('RPRT 0')) {
-            const lines = result.split('\n');
-            for (let line of lines) {
-                line = line.trim();
-                if (line && !line.includes('get_level') && !line.includes('RPRT') && !line.includes(level)) {
-                    value = parseFloat(line);
-                    break;
-                }
-            }
-        }
-        
+        const lines = result.split('\n');
+        const value = lines.length > 0 ? parseFloat(lines[0].trim()) : 0;
         res.json({ value });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -256,20 +245,8 @@ app.get('/api/func/:func', async (req, res) => {
     try {
         const func = req.params.func;
         const result = await sendRigCommand(`u ${func}`);
-        
-        // Parsowanie odpowiedzi z get_func
-        let value = 0;
-        if (result.includes('RPRT 0')) {
-            const lines = result.split('\n');
-            for (let line of lines) {
-                line = line.trim();
-                if (line && !line.includes('get_func') && !line.includes('RPRT') && !line.includes(func)) {
-                    value = parseInt(line);
-                    break;
-                }
-            }
-        }
-        
+        const lines = result.split('\n');
+        const value = lines.length > 0 ? parseInt(lines[0].trim()) : 0;
         res.json({ value });
     } catch (err) {
         res.status(500).json({ error: err.message });
