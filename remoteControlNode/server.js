@@ -1,196 +1,298 @@
+// server.js
 const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
 const net = require('net');
-const config = require('./config');
-
+const path = require('path');
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
 
-// static
+// Konfiguracja
+const RIGCTLD_HOST = '192.168.152.12';
+const RIGCTLD_PORT = 4532;
+const WEB_PORT = 3000;
+const TCP_TIMEOUT = 100;
+
+app.use(express.json());
 app.use(express.static('public'));
 
-// constants from original
-const cyclicRefreshParams = ['AG0', 'SQ0', 'RM0', 'PS', 'FA', 'FB', 'PC', 'AC', 'TX', 'RA0', 'PA0', 'VS', 'NB0', 'MD0', 'ML0'];
+// Funkcja do komunikacji z rigctld
+function sendRigCommand(cmd) {
+    return new Promise((resolve, reject) => {
+        const client = new net.Socket();
+        let data = '';
 
-let rigSocket = null;
-let connected = false;
-let retryCnt = 0;
-let pollInterval = config.POLL_MS;
-let pollTimer = null;
-let lastBuffer = '';
+        client.setTimeout(TCP_TIMEOUT);
 
-// helper: connect to rigctl
-function connectRig() {
-  if (rigSocket) {
-    try { rigSocket.destroy(); } catch(e) {}
-    rigSocket = null;
-    connected = false;
-  }
-
-  rigSocket = new net.Socket();
-  rigSocket.setTimeout(config.TCP_TIMEOUT_MS);
-
-  rigSocket.on('connect', () => {
-    connected = true;
-    retryCnt = 0;
-    console.log(`Connected to rig ${config.RIG_HOST}:${config.RIG_PORT}`);
-  });
-
-  rigSocket.on('timeout', () => {
-    // just note it; we'll handle when reading
-    // console.log('rig timeout');
-  });
-
-  rigSocket.on('error', (err) => {
-    connected = false;
-    // do not crash
-    // console.log('rig error', err.message);
-  });
-
-  rigSocket.on('close', () => {
-    connected = false;
-    // try reconnect later
-    // console.log('rig closed');
-  });
-
-  rigSocket.on('data', (data) => {
-    lastBuffer += data.toString('utf8');
-    // rig returns \n terminated chunks; we let polling read responses when we expect them
-  });
-
-  rigSocket.connect(config.RIG_PORT, config.RIG_HOST);
-}
-
-// send raw command (ensures newline)
-function sendToRig(cmd, cb) {
-  if (!connected || !rigSocket) {
-    if (cb) cb(null);
-    return;
-  }
-  if (!cmd.endsWith('\n')) cmd = cmd + '\n';
-  try {
-    rigSocket.write(cmd, 'ascii', cb);
-  } catch (e) {
-    if (cb) cb(null);
-  }
-}
-
-// parse integer from string like "AG0123"
-function parse_level_from_response_piece(piece) {
-  const m = piece.match(/(-?\d+)/);
-  if (!m) return null;
-  const v = parseInt(m[1], 10);
-  if (isNaN(v)) return null;
-  return Math.max(0, Math.min(255, v));
-}
-
-// Polling: send aggregated "wAG0;SQ0;RM0;..." like original
-function pollOnce() {
-  if (!connected) {
-    io.emit('status', `No connection to ${config.RIG_HOST}:${config.RIG_PORT}`);
-    retryCnt++;
-    if (retryCnt > config.MAX_RETRY_CNT) {
-      pollInterval = config.SLOWER_POLL_MS;
-      restartPolling();
-    }
-    return;
-  }
-
-  lastBuffer = ''; // reset accumulator for this poll
-  const cmd = 'w' + cyclicRefreshParams.map(p => p + ';').join('');
-  sendToRig(cmd, () => {
-    // wait a bit then parse buffer (rig usually replies quickly)
-    setTimeout(() => {
-      const resp = lastBuffer.replace(/\x00/g,'').replace(/\r/g,'').replace(/\n/g,';');
-      if (!resp || resp.length < 2) {
-        io.emit('status', `No answer from ${config.RIG_HOST}:${config.RIG_PORT}`);
-        retryCnt++;
-        if (retryCnt > config.MAX_RETRY_CNT) {
-          pollInterval = config.SLOWER_POLL_MS;
-          restartPolling();
-        }
-        return;
-      }
-
-      retryCnt = 0;
-      if (pollInterval !== config.POLL_MS) {
-        pollInterval = config.POLL_MS;
-        restartPolling();
-      }
-
-      const parts = resp.split(';').filter(Boolean);
-      // create map key->value (take first matching piece)
-      const map = {};
-      for (const p of parts) {
-        for (const key of cyclicRefreshParams) {
-            if (p.startsWith(key)) {
-                if (key === 'FA' || key === 'FB') {
-                // częstotliwości: całe Hz
-                const hz = parseInt(p.substring(2), 10);
-                if (!isNaN(hz)) map[key] = hz;
-                } else {
-                const num = parse_level_from_response_piece(p);
-                map[key] = num;
-                }
-                break;
+        client.connect(RIGCTLD_PORT, RIGCTLD_HOST, () => {
+            if (!cmd.endsWith('\n')) {
+                cmd = cmd + '\n';
             }
-        }
-      }
+            client.write(cmd);
+        });
 
-      // emit each key like original worker.result.emit(req, val)
-      for (const key of cyclicRefreshParams) {
-        if (map[key] !== undefined) {
-          io.emit('value', { key, val: map[key] });
-        }
-      }
+        client.on('data', (chunk) => {
+            data += chunk.toString();
+            // Jeśli dostaliśmy RPRT lub koniec linii, zakończ
+            if (data.includes('RPRT') || data.includes('\n')) {
+                client.destroy();
+            }
+        });
 
-      io.emit('status', `Connected with ${config.RIG_HOST}:${config.RIG_PORT}`);
-    }, 60);
-  });
+        client.on('close', () => {
+            resolve(data.trim());
+        });
+
+        client.on('error', (err) => {
+            reject(err);
+        });
+
+        client.on('timeout', () => {
+            client.destroy();
+            resolve(data.trim() || null);
+        });
+    });
 }
 
-function restartPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(pollOnce, pollInterval);
-}
+// API Endpoints
 
-// handle incoming socket.io from frontend
-io.on('connection', (socket) => {
-  console.log('client connected');
-  socket.emit('status', connected ? `Connected with ${config.RIG_HOST}:${config.RIG_PORT}` : `Not connected`);
-  // forward commands from frontend to rig
-  socket.on('command', (cmd) => {
-    // basic sanitization
-    if (typeof cmd !== 'string') return;
-    sendToRig(cmd);
-    // small echo
-    socket.emit('cmd_ack', cmd);
-  });
-
-  // pause polling (ms)
-  socket.on('pause_polling', (ms) => {
-    if (pollTimer) clearInterval(pollTimer);
-    setTimeout(() => { restartPolling(); }, ms);
-  });
-
-  // request immediate poll
-  socket.on('poll_now', () => pollOnce());
-});
-
-// start server + connect rig
-server.listen(config.SERVER_PORT, () => {
-  console.log(`HTTP server listening on port ${config.SERVER_PORT}`);
-  connectRig();
-  restartPolling();
-});
-
-// try reconnect if rig disconnected
-setInterval(() => {
-  if (!connected) {
+// Pobierz status zasilania
+app.get('/api/powerstat', async (req, res) => {
     try {
-      connectRig();
-    } catch(e) {}
-  }
-}, 5000);
+        const result = await sendRigCommand('\\get_powerstat');
+        const match = result.match(/Power Status: (\d+)/);
+        const status = match ? parseInt(match[1]) : 0;
+        res.json({ power: status });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Ustaw status zasilania
+app.post('/api/powerstat', async (req, res) => {
+    try {
+        const { state } = req.body;
+        await sendRigCommand(`\\set_powerstat ${state}`);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Pobierz częstotliwość
+app.get('/api/frequency', async (req, res) => {
+    try {
+        const result = await sendRigCommand('f');
+        const freq = result.split('\n')[0].trim();
+        res.json({ frequency: parseInt(freq) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Ustaw częstotliwość
+app.post('/api/frequency', async (req, res) => {
+    try {
+        const { frequency } = req.body;
+        await sendRigCommand(`F ${frequency}`);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Pobierz informacje o VFO
+app.get('/api/vfo/:vfo', async (req, res) => {
+    try {
+        const vfo = req.params.vfo.toUpperCase();
+        const result = await sendRigCommand(`\\get_vfo_info ${vfo}`);
+        
+        const freqMatch = result.match(/Freq: (-?\d+)/);
+        const modeMatch = result.match(/Mode: (\w+)/);
+        const widthMatch = result.match(/Width: (\d+)/);
+        
+        res.json({
+            frequency: freqMatch ? parseInt(freqMatch[1]) : 0,
+            mode: modeMatch ? modeMatch[1] : 'USB',
+            width: widthMatch ? parseInt(widthMatch[1]) : 2400
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Pobierz aktywny VFO
+app.get('/api/vfo', async (req, res) => {
+    try {
+        const result = await sendRigCommand('v');
+        const vfo = result.split('\n')[0].trim();
+        res.json({ vfo: vfo });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Przełącz VFO (A/B)
+app.post('/api/vfo/switch', async (req, res) => {
+    try {
+        await sendRigCommand('G XCHG');
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Pobierz mode
+app.get('/api/mode', async (req, res) => {
+    try {
+        const result = await sendRigCommand('m');
+        const lines = result.split('\n');
+        const mode = lines[0].trim();
+        const width = lines[1] ? parseInt(lines[1].trim()) : 0;
+        res.json({ mode, width });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Ustaw mode
+app.post('/api/mode', async (req, res) => {
+    try {
+        const { mode, width } = req.body;
+        await sendRigCommand(`M ${mode} ${width || 0}`);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Zmiana pasma w górę
+app.post('/api/band/up', async (req, res) => {
+    try {
+        await sendRigCommand('G BAND_UP');
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Zmiana pasma w dół
+app.post('/api/band/down', async (req, res) => {
+    try {
+        await sendRigCommand('G BAND_DOWN');
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// A=B
+app.post('/api/vfo/copy', async (req, res) => {
+    try {
+        await sendRigCommand('G CPY');
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// PTT
+app.post('/api/ptt', async (req, res) => {
+    try {
+        const { state } = req.body;
+        await sendRigCommand(`T ${state}`);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Split
+app.post('/api/split', async (req, res) => {
+    try {
+        const { state, vfo } = req.body;
+        await sendRigCommand(`S ${state} ${vfo}`);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Poziomy (Volume, Squelch, etc.)
+app.get('/api/level/:level', async (req, res) => {
+    try {
+        const level = req.params.level;
+        const result = await sendRigCommand(`l ${level}`);
+        const lines = result.split('\n');
+        const value = lines.length > 0 ? parseFloat(lines[0].trim()) : 0;
+        res.json({ value });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/level/:level', async (req, res) => {
+    try {
+        const level = req.params.level;
+        const { value } = req.body;
+        await sendRigCommand(`L ${level} ${value}`);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Funkcje (Tuner, NB, etc.)
+app.get('/api/func/:func', async (req, res) => {
+    try {
+        const func = req.params.func;
+        const result = await sendRigCommand(`u ${func}`);
+        const lines = result.split('\n');
+        const value = lines.length > 0 ? parseInt(lines[0].trim()) : 0;
+        res.json({ value });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/func/:func', async (req, res) => {
+    try {
+        const func = req.params.func;
+        const { value } = req.body;
+        await sendRigCommand(`U ${func} ${value}`);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// S-meter
+app.get('/api/strength', async (req, res) => {
+    try {
+        const result = await sendRigCommand('l STRENGTH');
+        const lines = result.split('\n');
+        const value = lines.length > 0 ? parseInt(lines[0].trim()) : 0;
+        res.json({ value });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// TX status
+app.get('/api/tx', async (req, res) => {
+    try {
+        const result = await sendRigCommand('t');
+        const match = result.match(/PTT: (\d+)/);
+        const status = match ? parseInt(match[1]) : 0;
+        res.json({ tx: status });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Serwowanie strony głównej
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(WEB_PORT, () => {
+    console.log(`Web Radio Control running on http://localhost:${WEB_PORT}`);
+    console.log(`Connecting to rigctld at ${RIGCTLD_HOST}:${RIGCTLD_PORT}`);
+});
