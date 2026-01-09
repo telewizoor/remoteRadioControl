@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Remote Control - FT-450D</title>
+    <title>Radio Remote Control</title>
     <style>
         * {
             margin: 0;
@@ -68,7 +68,7 @@
         }
 
         .freq-main {
-            font-size: 48px;
+            font-size: 38px;
             font-family: 'Courier New', monospace;
             font-weight: bold;
             color: #00ff00;
@@ -472,6 +472,9 @@
 
             if (mode) {
                 currentMode = mode.mode;
+                if (mode.width) {
+                    updateFilterFromWidth(mode.width);
+                }
                 updateModeDisplay();
             }
 
@@ -502,6 +505,31 @@
                 document.getElementById('sqlValue').textContent = Math.round(sql.value * 100);
             }
 
+            // Update funkcji
+            const [tuner, nb, monitor, att, preamp] = await Promise.all([
+                apiCall('/func/TUNER'),
+                apiCall('/func/NB'),
+                apiCall('/func/MON'),
+                apiCall('/level/ATT'),
+                apiCall('/level/PREAMP')
+            ]);
+
+            if (tuner !== null) {
+                document.getElementById('tunerBtn').classList.toggle('btn-active', tuner.value === 1);
+            }
+            if (nb !== null) {
+                document.getElementById('nbBtn').classList.toggle('btn-active', nb.value === 1);
+            }
+            if (monitor !== null) {
+                document.getElementById('monitorBtn').classList.toggle('btn-active', monitor.value === 1);
+            }
+            if (att !== null) {
+                document.getElementById('attBtn').classList.toggle('btn-active', att.value > 0);
+            }
+            if (preamp !== null) {
+                document.getElementById('ipoBtn').classList.toggle('btn-active', preamp.value > 0);
+            }
+
             updateStatus('Połączono', false);
         }
 
@@ -515,6 +543,30 @@
             document.querySelectorAll('.mode-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.textContent === currentMode);
             });
+        }
+
+        function updateFilterFromWidth(width) {
+            // Określ który filtr na podstawie szerokości
+            const filters = filterWidths[currentMode];
+            if (!filters) return;
+
+            if (width === filters.narrow) {
+                currentFilter = 'narrow';
+            } else if (width === filters.wide) {
+                currentFilter = 'wide';
+            } else {
+                currentFilter = 'normal';
+            }
+
+            // Podświetl odpowiedni przycisk
+            document.querySelectorAll('.filter-btn').forEach((btn, idx) => {
+                btn.classList.remove('active');
+            });
+
+            const filterBtns = document.querySelectorAll('.filter-btn');
+            if (currentFilter === 'narrow') filterBtns[0].classList.add('active');
+            else if (currentFilter === 'normal') filterBtns[1].classList.add('active');
+            else if (currentFilter === 'wide') filterBtns[2].classList.add('active');
         }
 
         function updatePowerDisplay() {
@@ -585,10 +637,7 @@
             const width = filterWidths[currentMode][filter];
             await apiCall('/mode', 'POST', { mode: currentMode, width });
             
-            document.querySelectorAll('.filter-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            event.target.classList.add('active');
+            updateFilterFromWidth(width);
         }
 
         async function bandUp() {
