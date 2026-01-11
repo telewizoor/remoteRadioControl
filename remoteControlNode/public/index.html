@@ -1,84 +1,725 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="pl">
 <head>
-  <meta charset="utf-8" />
-  <title>Remote Control - FT-450D (Web)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="/styles.css" />
-  <script src="/socket.io/socket.io.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radio Remote Control</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #2a2a2a;
+            color: #fff;
+            padding: 20px;
+            transition: background-color 0.3s;
+        }
+
+        body.tx-active {
+            background-color: #8b0000;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: #3a3a3a;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #ffd700;
+        }
+
+        .control-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .section {
+            background: #4a4a4a;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .section h2 {
+            margin-bottom: 15px;
+            color: #ffd700;
+            font-size: 18px;
+            border-bottom: 2px solid #ffd700;
+            padding-bottom: 5px;
+        }
+
+        .frequency-display {
+            background: #1a1a1a;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        .freq-main {
+            font-size: 38px;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            color: #00ff00;
+            letter-spacing: 2px;
+        }
+
+        .freq-label {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        .freq-sub {
+            font-size: 24px;
+            font-family: 'Courier New', monospace;
+            color: #88ff88;
+            margin-top: 10px;
+        }
+
+        .button-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .btn {
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.2s;
+            background: #666;
+            color: #fff;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-power {
+            background: #60fa60;
+            color: #000;
+        }
+
+        .btn-power.off {
+            background: #fa6060;
+        }
+
+        .btn-active {
+            background: #4CAF50;
+            color: #fff;
+        }
+
+        .btn-round {
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            padding: 0;
+            font-size: 12px;
+        }
+
+        .btn-ptt {
+            background: #d3d3d3;
+            grid-column: span 3;
+            padding: 20px;
+            font-size: 18px;
+        }
+
+        .btn-ptt.active {
+            background: #4CAF50;
+        }
+
+        .mode-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .mode-btn {
+            padding: 10px;
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #ccc;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .mode-btn.active {
+            background: #4CAF50;
+            color: #fff;
+            border-color: #4CAF50;
+        }
+
+        .freq-control {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .freq-control .btn {
+            padding: 15px;
+            font-size: 16px;
+        }
+
+        .slider-group {
+            margin: 15px 0;
+        }
+
+        .slider-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #ffd700;
+        }
+
+        .slider-group input[type="range"] {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: #666;
+            outline: none;
+        }
+
+        .slider-group input[type="range"]::-webkit-slider-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #4CAF50;
+            cursor: pointer;
+        }
+
+        .slider-value {
+            display: inline-block;
+            float: right;
+            color: #00ff00;
+            font-weight: bold;
+        }
+
+        .status-bar {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .vfo-indicator {
+            display: inline-block;
+            padding: 8px 16px;
+            background: lightgreen;
+            color: #000;
+            border-radius: 4px;
+            font-weight: bold;
+            margin: 0 10px;
+        }
+
+        .meter {
+            background: #1a1a1a;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+
+        .meter-bar {
+            width: 100%;
+            height: 24px;
+            background: #333;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .meter-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #FFC107, #F44336);
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #000;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .filter-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .filter-btn {
+            flex: 1;
+            padding: 10px;
+            background: #666;
+            border: 2px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .filter-btn.active {
+            background: #4CAF50;
+            border-color: #4CAF50;
+        }
+
+        input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 16px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #ffd700;
+        }
+    </style>
 </head>
 <body>
-  <div id="app">
-    <!-- top row -->
-    <div class="top-row">
-      <div class="power-indicator" id="powerIndicator" title="Radio OFF"></div>
-      <div class="left-column">
-        <div class="vfo-label" id="vfoLabel">VFO A</div>
-        <div class="mode-label" id="modeLabel">USB</div>
-      </div>
-      <div class="freq-block">
-        <div id="freqMain" class="freq-main">--- MHz</div>
-        <div id="freqSub" class="freq-sub">--- kHz</div>
-      </div>
-      <div class="right-buttons">
-        <button class="small-btn" id="attBtn">ATT</button>
-        <button class="small-btn" id="ipoBtn">IPO</button>
-        <button class="small-btn" id="txPowerBtn">-W</button>
-        <div style="height:6px"></div>
-        <button class="small-btn" id="nbBtn">NB</button>
-        <button class="small-btn" id="tunerBtn">TUNER</button>
-        <button class="small-btn" id="monitorBtn">MONITOR</button>
-      </div>
+    <div class="container">
+        <h1 id="title">Remote Radio Control</h1>
+
+        <div class="control-panel">
+            <!-- Sekcja częstotliwości -->
+            <div class="section">
+                <h2>Częstotliwość</h2>
+                <div class="frequency-display">
+                    <div class="freq-label">VFO A</div>
+                    <div class="freq-main" id="freqA">14.074000</div>
+                    <div class="freq-label">VFO B</div>
+                    <div class="freq-sub" id="freqB">14.074000</div>
+                </div>
+                
+                <div class="freq-control">
+                    <button class="btn" onclick="frequencyStep(100)">+ 100Hz</button>
+                    <button class="btn" onclick="frequencyStep(2500)">+ 2.5kHz</button>
+                    <button class="btn" onclick="frequencyStep(-100)">- 100Hz</button>
+                    <button class="btn" onclick="frequencyStep(-2500)">- 2.5kHz</button>
+                </div>
+
+                <div style="margin-top: 15px;">
+                    <input type="number" id="freqInput" placeholder="Częstotliwość (Hz)" 
+                           onchange="setFrequency(this.value)">
+                </div>
+            </div>
+
+            <!-- Sekcja MODE -->
+            <div class="section">
+                <h2>Mode</h2>
+                <div class="mode-buttons">
+                    <div class="mode-btn" onclick="setMode('LSB')">LSB</div>
+                    <div class="mode-btn active" onclick="setMode('USB')">USB</div>
+                    <div class="mode-btn" onclick="setMode('CW')">CW</div>
+                    <div class="mode-btn" onclick="setMode('FM')">FM</div>
+                    <div class="mode-btn" onclick="setMode('AM')">AM</div>
+                </div>
+
+                <h2 style="margin-top: 20px;">Filter</h2>
+                <div class="filter-group">
+                    <div class="filter-btn" onclick="setFilter('narrow')">NAR</div>
+                    <div class="filter-btn active" onclick="setFilter('normal')">NOR</div>
+                    <div class="filter-btn" onclick="setFilter('wide')">WID</div>
+                </div>
+            </div>
+
+            <!-- Sekcja kontroli -->
+            <div class="section">
+                <h2>Kontrola</h2>
+                <div class="button-grid">
+                    <button class="btn btn-power" id="powerBtn" onclick="togglePower()">ON</button>
+                    <button class="btn" onclick="bandUp()">BAND ↑</button>
+                    <button class="btn" onclick="bandDown()">BAND ↓</button>
+                    <button class="btn" onclick="vfoSwitch()">A / B</button>
+                    <button class="btn" onclick="vfoCopy()">A = B</button>
+                    <button class="btn" id="splitBtn" onclick="toggleSplit()">SPLIT</button>
+                    <button class="btn btn-ptt" id="pttBtn" 
+                            onmousedown="setPTT(true)" 
+                            onmouseup="setPTT(false)"
+                            ontouchstart="setPTT(true)" 
+                            ontouchend="setPTT(false)">PTT</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sekcja poziomów -->
+        <div class="control-panel">
+            <div class="section">
+                <h2>Audio</h2>
+                <div class="slider-group">
+                    <label>Volume <span class="slider-value" id="volValue">50</span></label>
+                    <input type="range" id="volume" min="0" max="100" value="50" 
+                           onchange="setLevel('AF', this.value/100)">
+                </div>
+                <div class="slider-group">
+                    <label>Squelch <span class="slider-value" id="sqlValue">0</span></label>
+                    <input type="range" id="squelch" min="0" max="100" value="0" 
+                           onchange="setLevel('SQL', this.value/100)">
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Funkcje</h2>
+                <div class="button-grid">
+                    <button class="btn" id="tunerBtn" onclick="toggleFunc('TUNER')">TUNER</button>
+                    <button class="btn" id="nbBtn" onclick="toggleFunc('NB')">NB</button>
+                    <button class="btn" id="monBtn" onclick="toggleFunc('MON')">MONITOR</button>
+                    <button class="btn" id="attBtn" onclick="toggleLevel('ATT', 20)">ATT</button>
+                    <button class="btn" id="ipoBtn" onclick="toggleLevel('PREAMP', 10)">IPO</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>S-Meter</h2>
+                <div class="meter">
+                    <div class="meter-bar">
+                        <div class="meter-fill" id="sMeter" style="width: 0%">S0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="status-bar">
+            <span class="vfo-indicator" id="vfoIndicator">VFO A</span>
+            <span id="statusMsg">Łączenie...</span>
+        </div>
     </div>
 
-    <!-- knobs -->
-    <div class="knobs-row">
-      <div class="knob-col">
-        <label>FREQ</label>
-        <input id="knobFreq" type="range" min="0" max="100" value="0"/>
-        <div class="knob-value" id="knobFreqVal">—</div>
-      </div>
-      <div class="knob-col">
-        <label>SQUELCH</label>
-        <input id="knobSquelch" type="range" min="0" max="255" value="0"/>
-        <div class="knob-value" id="knobSquelchVal">—</div>
-      </div>
-      <div class="knob-col">
-        <label>VOLUME</label>
-        <input id="knobVolume" type="range" min="0" max="255" value="0"/>
-        <div class="knob-value" id="knobVolumeVal">—</div>
-      </div>
-    </div>
+    <script>
+        let currentFreq = 14074000;
+        let currentMode = 'USB';
+        let currentFilter = 'normal';
+        let currentVFO = 'VFOA';
+        let powerState = false;
+        let splitState = false;
+        let updateInterval = null;
 
-    <!-- buttons -->
-    <div class="buttons-area">
-      <div class="btn-row">
-        <button class="round-btn" id="powerBtn">ON</button>
-        <button class="round-btn" id="bandDownBtn">BAND<br/>↓</button>
-        <button class="round-btn" id="bandUpBtn">BAND<br/>↑</button>
-        <button class="round-btn" id="aEqBBtn">A = B</button>
-        <button class="round-btn" id="vfoSwitchBtn">A / B</button>
-      </div>
-      <div class="btn-row">
-        <button class="round-btn" id="ipoAttBtn">IPO<br/>/ATT</button>
-        <button class="round-btn" id="splitBtn">SPLIT</button>
-        <button class="round-btn" id="modeDownBtn">MODE<br/>↓</button>
-        <button class="round-btn" id="modeUpBtn">MODE<br/>↑</button>
-      </div>
-    </div>
+        const filterWidths = {
+            USB: { narrow: 1800, normal: 2400, wide: 3000 },
+            LSB: { narrow: 1800, normal: 2400, wide: 3000 },
+            CW: { narrow: 300, normal: 500, wide: 2400 },
+            FM: { narrow: 2500, normal: 5000, wide: 5000 },
+            AM: { narrow: 3000, normal: 6000, wide: 9000 }
+        };
 
-    <!-- S-meter -->
-    <div class="smeter-area">
-      <progress id="smeter" value="0" max="255"></progress>
-      <div id="smeterLabel">S?</div>
-    </div>
+        // API calls
+        async function apiCall(endpoint, method = 'GET', data = null) {
+            try {
+                const options = {
+                    method,
+                    headers: { 'Content-Type': 'application/json' }
+                };
+                if (data) options.body = JSON.stringify(data);
+                
+                const response = await fetch(`/api${endpoint}`, options);
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                updateStatus('Błąd połączenia', true);
+                return null;
+            }
+        }
 
-    <div id="statusBar" class="status">Starting...</div>
-    <div class="ptt-row">
-        <button class="ptt-btn" id="pttBtn">PTT</button>
-    </div>
-  </div>
+        // Inicjalizacja
+        async function init() {
+            await updateAllStatus();
+            startPolling();
+        }
 
-  <script src="/app.js"></script>
+        function startPolling() {
+            if (updateInterval) clearInterval(updateInterval);
+            updateInterval = setInterval(updateAllStatus, 1000);
+        }
+
+        async function updateAllStatus() {
+            const [freq, mode, vfo, power] = await Promise.all([
+                apiCall('/frequency'),
+                apiCall('/mode'),
+                apiCall('/vfo'),
+                apiCall('/powerstat')
+            ]);
+
+            if (freq) {
+                currentFreq = freq.frequency;
+                updateFrequencyDisplay();
+            }
+
+            if (mode) {
+                currentMode = mode.mode;
+                if (mode.width) {
+                    updateFilterFromWidth(mode.width);
+                }
+                updateModeDisplay();
+            }
+
+            if (vfo) {
+                currentVFO = vfo.vfo;
+                document.getElementById('vfoIndicator').textContent = vfo.vfo;
+            }
+
+            if (power !== null) {
+                powerState = power.power === 1;
+                updatePowerDisplay();
+            }
+
+            // Update S-meter
+            const strength = await apiCall('/strength');
+            if (strength) updateSMeter(strength.value);
+
+            // Update levels
+            const vol = await apiCall('/level/AF');
+            if (vol) {
+                document.getElementById('volume').value = Math.round(vol.value * 100);
+                document.getElementById('volValue').textContent = Math.round(vol.value * 100);
+            }
+
+            const sql = await apiCall('/level/SQL');
+            if (sql) {
+                document.getElementById('squelch').value = Math.round(sql.value * 100);
+                document.getElementById('sqlValue').textContent = Math.round(sql.value * 100);
+            }
+
+            // Update funkcji
+            const [tuner, nb, monitor, att, preamp] = await Promise.all([
+                apiCall('/func/TUNER'),
+                apiCall('/func/NB'),
+                apiCall('/func/MON'),
+                apiCall('/level/ATT'),
+                apiCall('/level/PREAMP')
+            ]);
+
+            if (tuner !== null) {
+                document.getElementById('tunerBtn').classList.toggle('btn-active', tuner.value === 1);
+            }
+            if (nb !== null) {
+                document.getElementById('nbBtn').classList.toggle('btn-active', nb.value === 1);
+            }
+            if (monitor !== null) {
+                document.getElementById('monitorBtn').classList.toggle('btn-active', monitor.value === 1);
+            }
+            if (att !== null) {
+                document.getElementById('attBtn').classList.toggle('btn-active', att.value > 0);
+            }
+            if (preamp !== null) {
+                document.getElementById('ipoBtn').classList.toggle('btn-active', preamp.value > 0);
+            }
+
+            updateStatus('Połączono', false);
+        }
+
+        function updateFrequencyDisplay() {
+            const mhz = currentFreq / 1000000;
+            document.getElementById('freqA').textContent = mhz.toFixed(6);
+            document.getElementById('freqInput').value = currentFreq;
+        }
+
+        function updateModeDisplay() {
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.textContent === currentMode);
+            });
+        }
+
+        function updateFilterFromWidth(width) {
+            // Określ który filtr na podstawie szerokości
+            const filters = filterWidths[currentMode];
+            if (!filters) return;
+
+            if (width === filters.narrow) {
+                currentFilter = 'narrow';
+            } else if (width === filters.wide) {
+                currentFilter = 'wide';
+            } else {
+                currentFilter = 'normal';
+            }
+
+            // Podświetl odpowiedni przycisk
+            document.querySelectorAll('.filter-btn').forEach((btn, idx) => {
+                btn.classList.remove('active');
+            });
+
+            const filterBtns = document.querySelectorAll('.filter-btn');
+            if (currentFilter === 'narrow') filterBtns[0].classList.add('active');
+            else if (currentFilter === 'normal') filterBtns[1].classList.add('active');
+            else if (currentFilter === 'wide') filterBtns[2].classList.add('active');
+        }
+
+        function updatePowerDisplay() {
+            const btn = document.getElementById('powerBtn');
+            if (powerState) {
+                btn.textContent = 'OFF';
+                btn.classList.add('off');
+            } else {
+                btn.textContent = 'ON';
+                btn.classList.remove('off');
+            }
+        }
+
+        function updateSMeter(value) {
+            const db = value;
+            const pct = Math.min(100, Math.max(0, (db + 60) / 120 * 100));
+            
+            let label;
+            if (db < 0) {
+                const s = Math.min(9, Math.max(0, Math.round((db + 60) / 60 * 9)));
+                label = `S${s}`;
+            } else {
+                const extra = Math.min(60, Math.max(10, Math.floor(db / 10) * 10));
+                label = `+${extra}`;
+            }
+
+            const meter = document.getElementById('sMeter');
+            meter.style.width = pct + '%';
+            meter.textContent = label;
+        }
+
+        function updateStatus(msg, isError = false) {
+            const el = document.getElementById('statusMsg');
+            el.textContent = msg;
+            el.style.color = isError ? '#ff6b6b' : '#4CAF50';
+        }
+
+        // Kontrolki
+        async function togglePower() {
+            const newState = powerState ? 0 : 1;
+            await apiCall('/powerstat', 'POST', { state: newState });
+            setTimeout(updateAllStatus, newState ? 3000 : 500);
+        }
+
+        async function frequencyStep(step) {
+            currentFreq += step;
+            await setFrequency(currentFreq);
+        }
+
+        async function setFrequency(freq) {
+            freq = parseInt(freq);
+            if (isNaN(freq)) return;
+            
+            currentFreq = freq;
+            await apiCall('/frequency', 'POST', { frequency: freq });
+            updateFrequencyDisplay();
+        }
+
+        async function setMode(mode) {
+            currentMode = mode;
+            const width = filterWidths[mode][currentFilter];
+            await apiCall('/mode', 'POST', { mode, width });
+            updateModeDisplay();
+        }
+
+        async function setFilter(filter) {
+            currentFilter = filter;
+            const width = filterWidths[currentMode][filter];
+            await apiCall('/mode', 'POST', { mode: currentMode, width });
+            
+            updateFilterFromWidth(width);
+        }
+
+        async function bandUp() {
+            await apiCall('/band/up', 'POST');
+            setTimeout(updateAllStatus, 500);
+        }
+
+        async function bandDown() {
+            await apiCall('/band/down', 'POST');
+            setTimeout(updateAllStatus, 500);
+        }
+
+        async function vfoSwitch() {
+            await apiCall('/vfo/switch', 'POST');
+            setTimeout(updateAllStatus, 500);
+        }
+
+        async function vfoCopy() {
+            await apiCall('/vfo/copy', 'POST');
+            setTimeout(updateAllStatus, 500);
+        }
+
+        async function setPTT(state) {
+            const btn = document.getElementById('pttBtn');
+            btn.classList.toggle('active', state);
+            document.body.classList.toggle('tx-active', state);
+            document.getElementById('title').textContent = state ? 
+                '[TX] Remote Radio Control' : 'Remote Radio Control';
+            
+            await apiCall('/ptt', 'POST', { state: state ? 1 : 0 });
+        }
+
+        async function toggleSplit() {
+            splitState = !splitState;
+            const vfo = splitState ? 'VFOB' : 'VFOA';
+            await apiCall('/split', 'POST', { state: splitState ? 1 : 0, vfo });
+            
+            const btn = document.getElementById('splitBtn');
+            btn.classList.toggle('btn-active', splitState);
+        }
+
+        async function setLevel(level, value) {
+            await apiCall(`/level/${level}`, 'POST', { value });
+            
+            if (level === 'AF') {
+                document.getElementById('volValue').textContent = Math.round(value * 100);
+            } else if (level === 'SQL') {
+                document.getElementById('sqlValue').textContent = Math.round(value * 100);
+            }
+        }
+
+        async function toggleFunc(func) {
+            const btn = document.getElementById(func.toLowerCase() + 'Btn');
+            const current = btn.classList.contains('btn-active');
+            
+            await apiCall(`/func/${func}`, 'POST', { value: current ? 0 : 1 });
+            btn.classList.toggle('btn-active');
+        }
+
+        async function toggleLevel(level, value) {
+            const btn = document.getElementById(level.toLowerCase().replace('preamp', 'ipo') + 'Btn');
+            const current = btn.classList.contains('btn-active');
+            
+            await apiCall(`/level/${level}`, 'POST', { value: current ? 0 : value });
+            btn.classList.toggle('btn-active');
+        }
+
+        // Uruchom po załadowaniu
+        window.addEventListener('load', init);
+
+        // Obsługa klawiatury
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Control' && e.location === 2) { // prawy Ctrl
+                setPTT(true);
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'Control' && e.location === 2) {
+                setPTT(false);
+            }
+        });
+    </script>
 </body>
 </html>

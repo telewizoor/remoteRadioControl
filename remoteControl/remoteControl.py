@@ -105,6 +105,19 @@ DEFAULT_NOISE_REDUCTION = 5
 REC1_PATH = dir_path + '/recs/sp9pho_en.wav'
 REC2_PATH = dir_path + '/recs/cq_sp9pho.wav'
 
+EQ_OPTIONS = [
+    "Flat",
+    "_-- Lo - | Mid 0 | Hi 0",
+    "-_- Lo 0 | Mid - | Hi 0",
+    "--_ Lo 0 | Mid 0 | Hi -",
+    "--^ Lo 0 | Mid 0 | Hi +",
+    "-^- Lo 0 | Mid + | Hi 0",
+    "^-- Lo + | Mid 0 | Hi 0",
+    "^-_ Lo + | Mid 0 | Hi -",
+    "_^- Lo - | Mid + | Hi 0",
+    "_-^ Lo - | Mid 0 | Hi +",
+]
+
 # Antenna switch
 ANTENNA_SWITCH_ENABLED = True
 ANTENNA_SWITCH_PORT = 5000
@@ -125,6 +138,7 @@ WATERFALL_MIN_DB_DEFAULT = -90
 WATERFALL_DYNAMIC_RANGE = 25
 
 MOUSE_WHEEL_FREQ_STEP = 100
+MOUSE_WHEEL_FAST_FREQ_STEP = 1000
 
 WATERFALL_MARGIN   = 32
 MAJOR_THICK_HEIGHT = 12
@@ -241,85 +255,42 @@ def parse_level_from_response(resp):
     except ValueError:
         return None
 
-
-class BigKnob(QtWidgets.QWidget):
-    released = QtCore.pyqtSignal(int)
-
-    def __init__(self, title: str, parent=None, size: int = 100, value_label_visible=True):
+class EqDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, current_eq = 0):
         super().__init__(parent)
-        self.title = title
-        self.user_active = False
+        self.setWindowTitle("Microphone EQ")
+        self.selected_eq = None
 
-        self.dial = QtWidgets.QDial()
-        self.dial.setRange(0, 100)
-        self.dial.setNotchesVisible(True)
-        self.dial.setWrapping(False)
-        self.dial.setFixedSize(size, size)   # <<< używamy parametru size
-        self.dial.setSingleStep(1)
-        self.dial.setPageStep(1)
+        layout = QtWidgets.QVBoxLayout()
+        layout.addWidget(QtWidgets.QLabel("Choose EQ preset:"))
 
-        self.dial.sliderPressed.connect(self._on_pressed)
-        self.dial.sliderReleased.connect(self._on_released)
+        self.buttons = []
 
-        self.value_label = QtWidgets.QLabel("—")
-        self.value_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.value_label.setFont(QtGui.QFont("Monospace", KNOB_FONT_SIZE))
+        # Tworzenie radiobuttonów
+        for i, label in enumerate(EQ_OPTIONS):
+            rb = QtWidgets.QRadioButton(f"{i}: {label}")
+            mono = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+            rb.setFont(mono)
+            layout.addWidget(rb)
+            self.buttons.append(rb)
 
-        self.title_label = QtWidgets.QLabel(self.title)
-        self.title_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.title_label.setFont(QtGui.QFont("Monospace", KNOB_FONT_SIZE))
-        self.title_label.setStyleSheet("letter-spacing: 0px; font-weight: 600;")
+        self.buttons[int(current_eq)].setChecked(True)
 
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(self.title_label)
-        layout.addWidget(self.dial, alignment=QtCore.Qt.AlignCenter)
-        layout.addStretch(1)
-        if value_label_visible:
-            layout.addWidget(self.value_label)
+        # OK / Cancel
+        btn_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
 
-        self.dial.installEventFilter(self)
+        self.setLayout(layout)
 
-        self._timer = QtCore.QTimer(self)
-        self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self._on_idle_after_move)
-
-    def _on_pressed(self):
-        self.user_active = True
-        # print('pressed')
-
-    def _on_released(self):
-        self.user_active = False
-
-    def set_value(self, v):
-        if v is None:
-            self.value_label.setText("—")
-            return
-        self.dial.blockSignals(True)
-        self.dial.setValue(v)
-        self.dial.blockSignals(False)
-        self.value_label.setText(f"{v:3d}")
-
-    def eventFilter(self, obj, event):
-        if obj is self.dial and event.type() == QtCore.QEvent.Wheel:
-            delta = event.angleDelta().y()
-            if delta > 0:
-                if self.dial.value() < self.dial.maximum():
-                    # self.released.emit(self.dial.value() + 1)
-                    self.value_label.setText(f"{self.dial.value() + self.dial.pageStep():3d}")
-            else:
-                if self.dial.value() > self.dial.minimum():
-                    # self.released.emit(self.dial.value() - 1)
-                    self.value_label.setText(f"{self.dial.value() - self.dial.pageStep():3d}")
-
-            # restartujemy timer na 500 ms
-            self._timer.start(500)
-            self.user_active = True
-        return super().eventFilter(obj, event)
-    
-    def _on_idle_after_move(self):
-        """to wywoła się dopiero 500 ms po ostatnim ruchu"""
-        # print(f"BigKnob: zatrzymałeś się na {self.dial.value()}")
-        self.user_active = False
+    def accept(self):
+        # znajdź wybrany preset
+        for i, rb in enumerate(self.buttons):
+            if rb.isChecked():
+                self.selected_eq = i
+                break
+        super().accept()
 
 class ClickableLabel(QtWidgets.QLabel):
     clicked = QtCore.pyqtSignal()
@@ -668,6 +639,7 @@ class WaterfallWidget(QtWidgets.QWidget):
 
         self.waterfall_config_received = False
         self.initial_zoom_set = False
+        self.fast_freq = False
 
     def set_min_db(self, value):
         self.min_db = int(value)
@@ -695,6 +667,10 @@ class WaterfallWidget(QtWidgets.QWidget):
                 self.waterfall_config_received = True
         # redraw labels
         self.update()
+
+    @QtCore.pyqtSlot(bool)
+    def fast_freq_update(self, val: bool):
+        self.fast_freq = val
 
     @QtCore.pyqtSlot(int, int, str)
     def update_selected_freq(self, freq, width, mode):
@@ -783,8 +759,13 @@ class WaterfallWidget(QtWidgets.QWidget):
             elif delta < 0:
                 delta = -1
 
-            self.selected_freq -= self.selected_freq % MOUSE_WHEEL_FREQ_STEP
-            self.selected_freq += delta * MOUSE_WHEEL_FREQ_STEP
+            if not self.fast_freq:
+                step = MOUSE_WHEEL_FREQ_STEP
+            else:
+                step = MOUSE_WHEEL_FAST_FREQ_STEP
+
+            self.selected_freq -= self.selected_freq % step
+            self.selected_freq += delta * step
             self.freq_clicked.emit(self.selected_freq)
 
     def mousePressEvent(self, event):
@@ -1121,6 +1102,7 @@ class MainWindow(QtWidgets.QMainWindow):
     resume_polling = QtCore.pyqtSignal()
     sound_finished = QtCore.pyqtSignal(object)
     waterfall_freq_update = QtCore.pyqtSignal(int, int, str)
+    fast_freq_status = QtCore.pyqtSignal(bool)
     adjust_waterfall_colors = QtCore.pyqtSignal()
 
     def __init__(self):
@@ -1131,15 +1113,15 @@ class MainWindow(QtWidgets.QMainWindow):
         windowWidth = int(WINDOW_WIDTH_PERCENTAGE / 100 * sizeObject.width())
         windowHeight = int(WINDOW_HEIGHT_PERCENTAGE / 100 * sizeObject.height())
         windowHeight = 400
-        self.setGeometry(int((sizeObject.width() - windowWidth) / 2), sizeObject.height() - windowHeight - 8, windowWidth, windowHeight)
+        self.setGeometry(int((sizeObject.width() - windowWidth) / 2), sizeObject.height() - windowHeight - 48, windowWidth, windowHeight)
 
-        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        # self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowIcon(QIcon("logo.ico"))
 
         # self.setWindowOpacity(0.8)
 
         self.ignore_next_data_switch = False
-        self.ignore_next_data_cnt = 2
+        self.ignore_next_data_cnt = 3
 
         self.tx_active = 0
         self.tx_sent = 0
@@ -1267,11 +1249,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.swr_btn = QtWidgets.QPushButton("SWR")
         self.swr_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
-        self.swr_btn.setStyleSheet("background-color: " + "#e1a100" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.swr_btn.setStyleSheet("background-color: " + "#e6bb4f" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.swr_btn.pressed.connect(self.swr_btn_pressed)
         self.swr_btn.released.connect(self.swr_btn_released)
 
         right_grid.addWidget(self.swr_btn, 2, 0)
+
+        self.miceq_btn = QtWidgets.QPushButton("MIC EQ")
+        self.miceq_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
+        self.miceq_btn.setStyleSheet("background-color: " + "#e6bb4f" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.miceq_btn.pressed.connect(self.miceq_btn_btn_pressed)
+
+        right_grid.addWidget(self.miceq_btn, 2, 1)
 
         # --- GRUPA Z PRZYCISKAMI FREQ CTRL ---
         self.group_freq_ctrl = QtWidgets.QGroupBox("Freq Ctrl")
@@ -1286,6 +1275,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_freq_plus_fast = QtWidgets.QPushButton("+\n+")
         self.btn_freq_minus_slow = QtWidgets.QPushButton("-")
         self.btn_freq_minus_fast = QtWidgets.QPushButton("-\n-")
+
+        self.radio_fast_freq = QtWidgets.QCheckBox("Fast Scroll")
+        self.radio_fast_freq.clicked.connect(self.radio_fast_freq_clicked)
 
         # ustaw rozmiary i politykę rozciągania (ważne)
         for btn in [self.btn_freq_plus_slow, self.btn_freq_plus_fast,
@@ -1321,6 +1313,8 @@ class MainWindow(QtWidgets.QMainWindow):
         group_layout.setSpacing(0)
         group_layout.addStretch(1)                  # zajmuje miejsce nad siatką
         group_layout.addLayout(freq_grid)          # siatka przycisków -> będzie wyśrodkowana
+        group_layout.addSpacing(8)                  # zajmuje miejsce pod siatką
+        group_layout.addWidget(self.radio_fast_freq)
         group_layout.addStretch(1)                  # zajmuje miejsce pod siatką
 
         self.group_freq_ctrl.setLayout(group_layout)
@@ -1752,6 +1746,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.waterfall_widget.new_min_db.connect(self.on_new_min_db)
         self.waterfall_freq_update.connect(self.waterfall_widget.update_selected_freq)
         self.waterfall_freq_update.connect(self.ws_thread.send_set_frequency)
+        self.fast_freq_status.connect(self.waterfall_widget.fast_freq_update)
         self.adjust_waterfall_colors.connect(self.waterfall_widget.adjustWaterfallColors)
         self.ws_thread.start()
 
@@ -2636,6 +2631,9 @@ class MainWindow(QtWidgets.QMainWindow):
         cmd = f"M " + radioModes[new_mode] + " 0"
         self.client.send(cmd)
 
+    def radio_fast_freq_clicked(self):
+        self.fast_freq_status.emit(self.radio_fast_freq.isChecked())
+
     def frequency_step(self, sign, step):
         if sign > 0:
             self.current_freq -= self.current_freq%step
@@ -2872,9 +2870,24 @@ class MainWindow(QtWidgets.QMainWindow):
         # self.swr_btn.setText(f"SWR: {self.current_swr:1.1f}")
 
         self.send_tx_signal.emit(0)
-        self.swr_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.swr_btn.setStyleSheet("background-color: " + "#e6bb4f" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
 
         QTimer.singleShot(TX_OFF_DELAY + 20, self.stop_swr_check)
+
+    def miceq_btn_btn_pressed(self):
+        cmd = "EX037"
+        current_eq = self.client.send('w' + cmd + ';')
+        if cmd in current_eq:
+            current_eq = current_eq.replace(cmd, '')
+            current_eq = current_eq.replace(';', '')
+            current_eq = current_eq.replace('\0', '')
+            current_eq = current_eq.replace('RPRT 0', '')
+            current_eq = current_eq.replace('\n', '')
+            dlg = EqDialog(self, current_eq)
+            if dlg.exec_():
+                eq_value = dlg.selected_eq
+                cmd = 'w' + cmd + str(eq_value) + ';'
+                self.client.send(cmd)
 
     def stop_swr_check(self):
         cmd = f"M " + self.current_mode + " 0"
