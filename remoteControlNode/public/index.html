@@ -465,12 +465,12 @@
                 apiCall('/powerstat')
             ]);
 
-            if (freq) {
+            if (freq && !freq.error) {
                 currentFreq = freq.frequency;
                 updateFrequencyDisplay();
             }
 
-            if (mode) {
+            if (mode && !mode.error) {
                 currentMode = mode.mode;
                 if (mode.width) {
                     updateFilterFromWidth(mode.width);
@@ -478,12 +478,12 @@
                 updateModeDisplay();
             }
 
-            if (vfo) {
+            if (vfo && !vfo.error) {
                 currentVFO = vfo.vfo;
                 document.getElementById('vfoIndicator').textContent = vfo.vfo;
             }
 
-            if (power !== null) {
+            if (power && !power.error) {
                 powerState = power.power === 1;
                 updatePowerDisplay();
             }
