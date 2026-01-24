@@ -59,8 +59,7 @@ app.get('/api/powerstat', async (req, res) => {
     try {
         const result = await sendRigCommand('\\get_powerstat');
         console.log('Powerstat raw:', result);
-        const match = result.match(/Power Status: (\d+)/);
-        const status = match ? parseInt(match[1]) : 0;
+        const status = parseInt(result.trim());
         res.json({ power: status });
     } catch (err) {
         console.error('Powerstat error:', err);
