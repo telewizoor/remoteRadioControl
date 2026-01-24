@@ -330,6 +330,24 @@
                 </div>
             </div>
 
+            <!-- Sekcja kontroli -->
+            <div class="section">
+                <h2>Kontrola</h2>
+                <div class="button-grid">
+                    <button class="btn btn-power" id="powerBtn" onclick="togglePower()">ON</button>
+                    <button class="btn" onclick="bandUp()">BAND ↑</button>
+                    <button class="btn" onclick="bandDown()">BAND ↓</button>
+                    <button class="btn" onclick="vfoSwitch()">A / B</button>
+                    <button class="btn" onclick="vfoCopy()">A = B</button>
+                    <button class="btn" id="splitBtn" onclick="toggleSplit()">SPLIT</button>
+                    <button class="btn btn-ptt" id="pttBtn" 
+                            onmousedown="setPTT(true)" 
+                            onmouseup="setPTT(false)"
+                            ontouchstart="setPTT(true)" 
+                            ontouchend="setPTT(false)">PTT</button>
+                </div>
+            </div>
+
             <!-- Sekcja MODE -->
             <div class="section">
                 <h2>Mode</h2>
@@ -346,24 +364,6 @@
                     <div class="filter-btn" onclick="setFilter('narrow')">NAR</div>
                     <div class="filter-btn active" onclick="setFilter('normal')">NOR</div>
                     <div class="filter-btn" onclick="setFilter('wide')">WID</div>
-                </div>
-            </div>
-
-            <!-- Sekcja kontroli -->
-            <div class="section">
-                <h2>Kontrola</h2>
-                <div class="button-grid">
-                    <button class="btn btn-power" id="powerBtn" onclick="togglePower()">ON</button>
-                    <button class="btn" onclick="bandUp()">BAND ↑</button>
-                    <button class="btn" onclick="bandDown()">BAND ↓</button>
-                    <button class="btn" onclick="vfoSwitch()">A / B</button>
-                    <button class="btn" onclick="vfoCopy()">A = B</button>
-                    <button class="btn" id="splitBtn" onclick="toggleSplit()">SPLIT</button>
-                    <button class="btn btn-ptt" id="pttBtn" 
-                            onmousedown="setPTT(true)" 
-                            onmouseup="setPTT(false)"
-                            ontouchstart="setPTT(true)" 
-                            ontouchend="setPTT(false)">PTT</button>
                 </div>
             </div>
         </div>
