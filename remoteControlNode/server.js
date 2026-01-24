@@ -5,10 +5,10 @@ const path = require('path');
 const app = express();
 
 // Konfiguracja
-const RIGCTLD_HOST = '192.168.152.12';
+const RIGCTLD_HOST = '0.0.0.0';
 const RIGCTLD_PORT = 4532;
 const WEB_PORT = 80;
-const TCP_TIMEOUT = 100;
+const TCP_TIMEOUT = 1000; // zwiększony timeout
 
 app.use(express.json());
 app.use(express.static('public'));
@@ -31,7 +31,7 @@ function sendRigCommand(cmd) {
         client.on('data', (chunk) => {
             data += chunk.toString();
             // Jeśli dostaliśmy RPRT lub koniec linii, zakończ
-            if (data.includes('RPRT') || data.includes('\n')) {
+            if (data.includes('RPRT') || data.endsWith('\n')) {
                 client.destroy();
             }
         });
@@ -41,12 +41,13 @@ function sendRigCommand(cmd) {
         });
 
         client.on('error', (err) => {
+            client.destroy();
             reject(err);
         });
 
         client.on('timeout', () => {
             client.destroy();
-            resolve(data.trim() || null);
+            reject(new Error('Timeout'));
         });
     });
 }
@@ -57,10 +58,12 @@ function sendRigCommand(cmd) {
 app.get('/api/powerstat', async (req, res) => {
     try {
         const result = await sendRigCommand('\\get_powerstat');
+        console.log('Powerstat raw:', result);
         const match = result.match(/Power Status: (\d+)/);
         const status = match ? parseInt(match[1]) : 0;
         res.json({ power: status });
     } catch (err) {
+        console.error('Powerstat error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -69,9 +72,11 @@ app.get('/api/powerstat', async (req, res) => {
 app.post('/api/powerstat', async (req, res) => {
     try {
         const { state } = req.body;
-        await sendRigCommand(`\\set_powerstat ${state}`);
+        const result = await sendRigCommand(`\\set_powerstat ${state}`);
+        console.log('Set powerstat result:', result);
         res.json({ success: true });
     } catch (err) {
+        console.error('Set powerstat error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -215,7 +220,6 @@ app.post('/api/split', async (req, res) => {
     }
 });
 
-// Poziomy (Volume, Squelch, etc.)
 // Poziomy (Volume, Squelch, etc.)
 app.get('/api/level/:level', async (req, res) => {
     try {
