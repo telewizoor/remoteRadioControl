@@ -6,7 +6,7 @@ sudo wget -O /etc/apt/trusted.gpg.d/sonobus.gpg https://pkg.sonobus.net/apt/keyr
 sudo apt update && sudo apt install sonobus
 
 # Node for www
-sudo apt-get install nodejs
+sudo apt-get install nodejs npm
 
 # Directory for software
 cd ~
@@ -29,7 +29,10 @@ cd remoteRadioControl
 # Services, autostart etc
 cd ~/Project/remoteRadioControl/raspberry
 sudo cp catcontrol.service /etc/systemd/system
+sudo cp remotecontrolnode.service /etc/systemd/system
 sudo cp sonobus.desktop /etc/xdg/autostart
 sudo systemctl daemon-reload
 sudo systemctl enable catcontrol.service
 sudo systemctl start catcontrol.service
+sudo systemctl enable remotecontrolnode.service
+sudo systemctl start remotecontrolnode.service
