@@ -5,6 +5,9 @@ echo "deb http://pkg.sonobus.net/apt stable main" | sudo tee /etc/apt/sources.li
 sudo wget -O /etc/apt/trusted.gpg.d/sonobus.gpg https://pkg.sonobus.net/apt/keyring.gpg
 sudo apt update && sudo apt install sonobus
 
+# Node for www
+sudo apt-get install nodejs
+
 # Directory for software
 cd ~
 mkdir Project

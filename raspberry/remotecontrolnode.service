@@ -1,0 +1,15 @@
+[Unit]
+Description=Remote Control Nodejs Server Service
+After=multi-user.target
+
+[Service]
+ExecStart=sudo node server.js
+Restart=always
+RestartSec=30
+WorkingDirectory=/home/admin/Project/remoteRadioControl/remoteControlNode
+StandardOutput=journal
+StandardError=journal
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
