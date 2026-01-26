@@ -1,18 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Aplikacja PyQt5 imitująca front Yaesu FT‑450D:
-- Dwie gałki: SQUELCH i VOLUME
-- Odczyt S‑metra (jako pasek)
-- Odczyt w osobnym wątku (QThread)
-- Polling zagregowany: wAG0;SQ0;SM0; -> trzy wartości naraz
-- Podczas kręcenia gałką nie synchronizuje się z radiem; po puszczeniu wysyła komendę ustawiającą
-"""
-
 import sys
 import socket
 import re
-import time
 import threading
 from soundPlayer import playSound, stopSound
 from pynput import keyboard
@@ -30,6 +20,7 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 ### --- Configuration --- ###
 # Connection
 HOST = "192.168.152.12"
+# HOST = "10.2.145.73"
 PORT = 4532
 TCP_TIMEOUT = 0.1
 POLL_MS = 500
@@ -119,7 +110,7 @@ EQ_OPTIONS = [
 ]
 
 # Antenna switch
-ANTENNA_SWITCH_ENABLED = True
+ANTENNA_SWITCH_ENABLED = False
 ANTENNA_SWITCH_PORT = 5000
 ANTENNA_1_NAME = 'Hex'
 ANTENNA_1_CMD = '1'
@@ -130,6 +121,7 @@ ANTENNA_3_CMD = '3'
 GET_ANTENNA_CMD = 'get'
 
 # Waterfall
+WATERFALL_ENABLED = False
 WS_URL = "ws://" + HOST + ":8073/ws/"
 DEFAULT_FFT_SIZE = 2048
 
@@ -1112,7 +1104,11 @@ class MainWindow(QtWidgets.QMainWindow):
         sizeObject = QtWidgets.QDesktopWidget().availableGeometry(-1)
         windowWidth = int(WINDOW_WIDTH_PERCENTAGE / 100 * sizeObject.width())
         windowHeight = int(WINDOW_HEIGHT_PERCENTAGE / 100 * sizeObject.height())
-        windowHeight = 400
+        if WATERFALL_ENABLED:
+            windowHeight = 400
+        else:
+            windowHeight = 200
+
         self.setGeometry(int((sizeObject.width() - windowWidth) / 2), sizeObject.height() - windowHeight - 48, windowWidth, windowHeight)
 
         # self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
@@ -1531,7 +1527,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Domyślne zaznaczenie
         # self.antenna_1.setChecked(True)
-        self.get_current_antenna()
+        if ANTENNA_SWITCH_ENABLED:
+            self.get_current_antenna()
 
         # Dodajemy przyciski do layoutu pionowego
         antenna_layout.addWidget(self.antenna_1)
@@ -1708,8 +1705,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.root = QtWidgets.QVBoxLayout(central)
         self.root.addLayout(top_row)
         self.root.addLayout(self.smeter_row)
-        self.root.addWidget(self.waterfall_widget)
-        self.root.addLayout(controls)
+        if WATERFALL_ENABLED:
+            self.root.addWidget(self.waterfall_widget)
+            self.root.addLayout(controls)
         self.root.addStretch(0)
 
         self.status = self.statusBar()
@@ -1737,18 +1735,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sound_finished.connect(self._on_sound_finished)
 
         # Waterfall
-        self.ws_thread = WsReceiver(WS_URL, fft_size=DEFAULT_FFT_SIZE)
-        self.ws_thread.push_row_signal.connect(self.waterfall_widget.push_row)
-        self.ws_thread.config_signal.connect(self.waterfall_widget.update_config)
-        self.waterfall_widget.samp_rate = self.ws_thread.samp_rate
-        self.waterfall_widget.center_freq = self.ws_thread.center_freq
-        self.waterfall_widget.freq_clicked.connect(self.on_freq_clicked)
-        self.waterfall_widget.new_min_db.connect(self.on_new_min_db)
-        self.waterfall_freq_update.connect(self.waterfall_widget.update_selected_freq)
-        self.waterfall_freq_update.connect(self.ws_thread.send_set_frequency)
-        self.fast_freq_status.connect(self.waterfall_widget.fast_freq_update)
-        self.adjust_waterfall_colors.connect(self.waterfall_widget.adjustWaterfallColors)
-        self.ws_thread.start()
+        if WATERFALL_ENABLED:
+            self.ws_thread = WsReceiver(WS_URL, fft_size=DEFAULT_FFT_SIZE)
+            self.ws_thread.push_row_signal.connect(self.waterfall_widget.push_row)
+            self.ws_thread.config_signal.connect(self.waterfall_widget.update_config)
+            self.waterfall_widget.samp_rate = self.ws_thread.samp_rate
+            self.waterfall_widget.center_freq = self.ws_thread.center_freq
+            self.waterfall_widget.freq_clicked.connect(self.on_freq_clicked)
+            self.waterfall_widget.new_min_db.connect(self.on_new_min_db)
+            self.waterfall_freq_update.connect(self.waterfall_widget.update_selected_freq)
+            self.waterfall_freq_update.connect(self.ws_thread.send_set_frequency)
+            self.fast_freq_status.connect(self.waterfall_widget.fast_freq_update)
+            self.adjust_waterfall_colors.connect(self.waterfall_widget.adjustWaterfallColors)
+            self.ws_thread.start()
 
         self.client = RigctlClient(HOST, PORT, timeout=TCP_TIMEOUT)
 
