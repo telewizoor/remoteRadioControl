@@ -17,22 +17,129 @@ import json
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
-### --- Configuration --- ###
+### --- Configuration Class --- ###
+class Config:
+    """Klasa zarządzająca konfiguracją aplikacji"""
+    
+    def __init__(self, config_file='config.json'):
+        self.config_file = os.path.join(dir_path, config_file)
+        self.defaults = self._get_defaults()
+        self.settings = self.defaults.copy()
+        self.load()
+    
+    def _get_defaults(self):
+        """Zwraca domyślne ustawienia"""
+        return {
+            # Connection
+            'host': "192.168.152.12",
+            'port': 4532,
+            'poll_ms': 500,
+            
+            # Radio Settings
+            'freq_step_slow': 100,
+            'freq_step_fast': 2500,
+            'mouse_wheel_freq_step': 100,
+            'mouse_wheel_fast_freq_step': 1000,
+            'tx_off_delay': 100,
+            'default_noise_reduction': 5,
+            
+            # Keyboard
+            'ptt_key': 'ctrl_r',
+            
+            # Antenna Switch
+            'antenna_switch_enabled': True,
+            'antenna_switch_port': 5000,
+            'antenna_1_name': 'Hex',
+            'antenna_2_name': 'Dpl',
+            'antenna_3_name': 'End',
+            
+            # Waterfall
+            'waterfall_enabled': True,
+            'waterfall_initial_zoom': 0.25,
+            'waterfall_dynamic_range': 25,
+            'waterfall_min_db_default': -90,
+            
+            # Filter Widths
+            'filter_width_usb_narrow': 1800,
+            'filter_width_usb_normal': 2400,
+            'filter_width_usb_wide': 3000,
+            'filter_width_lsb_narrow': 1800,
+            'filter_width_lsb_normal': 2400,
+            'filter_width_lsb_wide': 3000,
+            'filter_width_am_narrow': 3000,
+            'filter_width_am_normal': 6000,
+            'filter_width_am_wide': 9000,
+            'filter_width_fm_narrow': 2500,
+            'filter_width_fm_normal': 5000,
+            'filter_width_fm_wide': 5000,
+            'filter_width_cw_narrow': 300,
+            'filter_width_cw_normal': 500,
+            'filter_width_cw_wide': 2400,
+            'filter_width_cwr_narrow': 300,
+            'filter_width_cwr_normal': 500,
+            'filter_width_cwr_wide': 2400,
+            
+            # Interface
+            'stay_on_top': False,
+        }
+    
+    def load(self):
+        """Wczytuje konfigurację z pliku JSON"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    loaded = json.load(f)
+                    # Merguje załadowane ustawienia z domyślnymi
+                    self.settings.update(loaded)
+                print(f"Configuration loaded from {self.config_file}")
+            else:
+                print(f"Config file not found, using defaults")
+                self.save()  # Zapisz domyślną konfigurację
+        except Exception as e:
+            print(f"Error loading config: {e}, using defaults")
+            self.settings = self.defaults.copy()
+    
+    def save(self):
+        """Zapisuje konfigurację do pliku JSON"""
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.settings, f, indent=4, ensure_ascii=False)
+            print(f"Configuration saved to {self.config_file}")
+            return True
+        except Exception as e:
+            print(f"Error saving config: {e}")
+            return False
+    
+    def get(self, key, default=None):
+        """Pobiera wartość ustawienia"""
+        return self.settings.get(key, default)
+    
+    def set(self, key, value):
+        """Ustawia wartość ustawienia"""
+        self.settings[key] = value
+    
+    def reset_to_defaults(self):
+        """Resetuje ustawienia do wartości domyślnych"""
+        self.settings = self.defaults.copy()
+
+# Globalna instancja konfiguracji
+config = Config()
+
+### --- Configuration (Legacy - for backward compatibility) --- ###
 # Connection
-HOST = "192.168.152.12"
-# HOST = "10.2.145.73"
-PORT = 4532
+HOST = config.get('host')
+PORT = config.get('port')
 TCP_TIMEOUT = 0.1
-POLL_MS = 500
+POLL_MS = config.get('poll_ms')
 SLOWER_POLL_MS = 2000
 MAX_RETRY_CNT = 3
 
 # Functional
 PLAYER_ACTIVE = False
-FREQ_STEP_SLOW = 100
-FREQ_STEP_FAST = 2500
-TX_OFF_DELAY = 100
-PTT_KEY = 'ctrl_r'
+FREQ_STEP_SLOW = config.get('freq_step_slow')
+FREQ_STEP_FAST = config.get('freq_step_fast')
+TX_OFF_DELAY = config.get('tx_off_delay')
+PTT_KEY = config.get('ptt_key')
 FST_KEY_MOD = 'shift'
 FST_KEY = 'w'
 
@@ -61,29 +168,29 @@ ACTIVE_VFO_FONT = QtGui.QFont("Monospace", 12, QtGui.QFont.Bold)
 SECOND_VFO_FONT = QtGui.QFont("Monospace", 10)
 
 # Radio width
-FILTER_WIDTH_USB_NARROW = 1800
-FILTER_WIDTH_USB_NORMAL = 2400
-FILTER_WIDTH_USB_WIDE   = 3000
+FILTER_WIDTH_USB_NARROW = config.get('filter_width_usb_narrow')
+FILTER_WIDTH_USB_NORMAL = config.get('filter_width_usb_normal')
+FILTER_WIDTH_USB_WIDE   = config.get('filter_width_usb_wide')
 
-FILTER_WIDTH_LSB_NARROW = 1800
-FILTER_WIDTH_LSB_NORMAL = 2400
-FILTER_WIDTH_LSB_WIDE   = 3000
+FILTER_WIDTH_LSB_NARROW = config.get('filter_width_lsb_narrow')
+FILTER_WIDTH_LSB_NORMAL = config.get('filter_width_lsb_normal')
+FILTER_WIDTH_LSB_WIDE   = config.get('filter_width_lsb_wide')
 
-FILTER_WIDTH_AM_NARROW  = 3000
-FILTER_WIDTH_AM_NORMAL  = 6000
-FILTER_WIDTH_AM_WIDE    = 9000
+FILTER_WIDTH_AM_NARROW  = config.get('filter_width_am_narrow')
+FILTER_WIDTH_AM_NORMAL  = config.get('filter_width_am_normal')
+FILTER_WIDTH_AM_WIDE    = config.get('filter_width_am_wide')
 
-FILTER_WIDTH_FM_NARROW  = 2500
-FILTER_WIDTH_FM_NORMAL  = 5000
-FILTER_WIDTH_FM_WIDE    = 5000
+FILTER_WIDTH_FM_NARROW  = config.get('filter_width_fm_narrow')
+FILTER_WIDTH_FM_NORMAL  = config.get('filter_width_fm_normal')
+FILTER_WIDTH_FM_WIDE    = config.get('filter_width_fm_wide')
 
-FILTER_WIDTH_CW_NARROW  = 300
-FILTER_WIDTH_CW_NORMAL  = 500
-FILTER_WIDTH_CW_WIDE    = 2400
+FILTER_WIDTH_CW_NARROW  = config.get('filter_width_cw_narrow')
+FILTER_WIDTH_CW_NORMAL  = config.get('filter_width_cw_normal')
+FILTER_WIDTH_CW_WIDE    = config.get('filter_width_cw_wide')
 
-FILTER_WIDTH_CWR_NARROW  = 300
-FILTER_WIDTH_CWR_NORMAL  = 500
-FILTER_WIDTH_CWR_WIDE    = 2400
+FILTER_WIDTH_CWR_NARROW  = config.get('filter_width_cwr_narrow')
+FILTER_WIDTH_CWR_NORMAL  = config.get('filter_width_cwr_normal')
+FILTER_WIDTH_CWR_WIDE    = config.get('filter_width_cwr_wide')
 
 # Misc
 SWR_METER = 1
@@ -91,7 +198,7 @@ ALC_METER = 2
 PO_METER  = 3
 DEFAULT_TX_METER = SWR_METER
 
-DEFAULT_NOISE_REDUCTION = 5
+DEFAULT_NOISE_REDUCTION = config.get('default_noise_reduction')
 
 REC1_PATH = dir_path + '/recs/sp9pho_en.wav'
 REC2_PATH = dir_path + '/recs/cq_sp9pho.wav'
@@ -110,27 +217,27 @@ EQ_OPTIONS = [
 ]
 
 # Antenna switch
-ANTENNA_SWITCH_ENABLED = False
-ANTENNA_SWITCH_PORT = 5000
-ANTENNA_1_NAME = 'Hex'
+ANTENNA_SWITCH_ENABLED = config.get('antenna_switch_enabled')
+ANTENNA_SWITCH_PORT = config.get('antenna_switch_port')
+ANTENNA_1_NAME = config.get('antenna_1_name')
 ANTENNA_1_CMD = '1'
-ANTENNA_2_NAME = 'Dpl'
+ANTENNA_2_NAME = config.get('antenna_2_name')
 ANTENNA_2_CMD = '2'
-ANTENNA_3_NAME = 'End'
+ANTENNA_3_NAME = config.get('antenna_3_name')
 ANTENNA_3_CMD = '3'
 GET_ANTENNA_CMD = 'get'
 
 # Waterfall
-WATERFALL_ENABLED = False
+WATERFALL_ENABLED = config.get('waterfall_enabled')
 WS_URL = "ws://" + HOST + ":8073/ws/"
 DEFAULT_FFT_SIZE = 2048
 
-INITIAL_ZOOM = 0.25
-WATERFALL_MIN_DB_DEFAULT = -90
-WATERFALL_DYNAMIC_RANGE = 25
+INITIAL_ZOOM = config.get('waterfall_initial_zoom')
+WATERFALL_MIN_DB_DEFAULT = config.get('waterfall_min_db_default')
+WATERFALL_DYNAMIC_RANGE = config.get('waterfall_dynamic_range')
 
-MOUSE_WHEEL_FREQ_STEP = 100
-MOUSE_WHEEL_FAST_FREQ_STEP = 1000
+MOUSE_WHEEL_FREQ_STEP = config.get('mouse_wheel_freq_step')
+MOUSE_WHEEL_FAST_FREQ_STEP = config.get('mouse_wheel_fast_freq_step')
 
 WATERFALL_MARGIN   = 32
 MAJOR_THICK_HEIGHT = 12
@@ -193,6 +300,7 @@ def findIndexOfString(element, matrix):
     for i in range(len(matrix)):
         if matrix[i] == element:
             return i
+    return None
 
 class RigctlClient:
     def __init__(self, host: str, port: int, timeout: float = TCP_TIMEOUT):
@@ -200,6 +308,7 @@ class RigctlClient:
         self.port = port
         self.timeout = timeout
         self.trx_power_status = 0
+        self.s = None
         try:
             self.s = socket.create_connection((self.host, self.port), timeout=self.timeout)
             self.connected = 1
@@ -210,7 +319,7 @@ class RigctlClient:
         if not cmd.endswith("\n"):
             cmd = cmd + "\n"
         try:
-            if hasattr(self, 's') :#and self.retry_cnt < MAX_RETRY_CNT:
+            if self.s is not None:
                 self.s.settimeout(self.timeout)
                 self.s.sendall(cmd.encode("ascii", errors="ignore"))
                 chunks = []
@@ -361,6 +470,324 @@ class FrequencyDialog(QtWidgets.QDialog):
 
     def get_value(self):
         return int(self.edit.text())
+
+
+class SettingsDialog(QtWidgets.QDialog):
+    """Dialog ustawień aplikacji z zakładkami"""
+    
+    def __init__(self, parent=None, current_config=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(500)
+        
+        self.config = current_config or config
+        self.temp_settings = self.config.settings.copy()
+        
+        # Główny layout
+        main_layout = QtWidgets.QVBoxLayout()
+        
+        # Zakładki
+        self.tabs = QtWidgets.QTabWidget()
+        
+        # --- Zakładka: Connection ---
+        tab_connection = QtWidgets.QWidget()
+        layout_conn = QtWidgets.QFormLayout()
+        
+        self.edit_host = QtWidgets.QLineEdit(str(self.temp_settings['host']))
+        self.edit_port = QtWidgets.QSpinBox()
+        self.edit_port.setRange(1, 65535)
+        self.edit_port.setValue(self.temp_settings['port'])
+        self.edit_poll_ms = QtWidgets.QSpinBox()
+        self.edit_poll_ms.setRange(100, 5000)
+        self.edit_poll_ms.setSuffix(" ms")
+        self.edit_poll_ms.setValue(self.temp_settings['poll_ms'])
+        
+        layout_conn.addRow("Host IP:", self.edit_host)
+        layout_conn.addRow("Rigctl Port:", self.edit_port)
+        layout_conn.addRow("Poll Interval:", self.edit_poll_ms)
+        
+        tab_connection.setLayout(layout_conn)
+        self.tabs.addTab(tab_connection, "Connection")
+        
+        # --- Zakładka: Radio Settings ---
+        tab_radio = QtWidgets.QWidget()
+        layout_radio = QtWidgets.QFormLayout()
+        
+        self.edit_freq_step_slow = QtWidgets.QSpinBox()
+        self.edit_freq_step_slow.setRange(1, 10000)
+        self.edit_freq_step_slow.setSuffix(" Hz")
+        self.edit_freq_step_slow.setValue(self.temp_settings['freq_step_slow'])
+        
+        self.edit_freq_step_fast = QtWidgets.QSpinBox()
+        self.edit_freq_step_fast.setRange(1, 10000)
+        self.edit_freq_step_fast.setSuffix(" Hz")
+        self.edit_freq_step_fast.setValue(self.temp_settings['freq_step_fast'])
+        
+        self.edit_mouse_wheel_freq = QtWidgets.QSpinBox()
+        self.edit_mouse_wheel_freq.setRange(1, 10000)
+        self.edit_mouse_wheel_freq.setSuffix(" Hz")
+        self.edit_mouse_wheel_freq.setValue(self.temp_settings['mouse_wheel_freq_step'])
+        
+        self.edit_mouse_wheel_fast_freq = QtWidgets.QSpinBox()
+        self.edit_mouse_wheel_fast_freq.setRange(1, 10000)
+        self.edit_mouse_wheel_fast_freq.setSuffix(" Hz")
+        self.edit_mouse_wheel_fast_freq.setValue(self.temp_settings['mouse_wheel_fast_freq_step'])
+        
+        self.edit_tx_off_delay = QtWidgets.QSpinBox()
+        self.edit_tx_off_delay.setRange(0, 1000)
+        self.edit_tx_off_delay.setSuffix(" ms")
+        self.edit_tx_off_delay.setValue(self.temp_settings['tx_off_delay'])
+        
+        self.edit_default_nr = QtWidgets.QSpinBox()
+        self.edit_default_nr.setRange(1, 11)
+        self.edit_default_nr.setValue(self.temp_settings['default_noise_reduction'])
+        
+        layout_radio.addRow("Freq Step (Slow):", self.edit_freq_step_slow)
+        layout_radio.addRow("Freq Step (Fast):", self.edit_freq_step_fast)
+        layout_radio.addRow("Mouse Wheel Step:", self.edit_mouse_wheel_freq)
+        layout_radio.addRow("Mouse Wheel Step (Fast):", self.edit_mouse_wheel_fast_freq)
+        layout_radio.addRow("TX Off Delay:", self.edit_tx_off_delay)
+        layout_radio.addRow("Default Noise Reduction:", self.edit_default_nr)
+        
+        tab_radio.setLayout(layout_radio)
+        self.tabs.addTab(tab_radio, "Radio")
+        
+        # --- Zakładka: Keyboard ---
+        tab_keyboard = QtWidgets.QWidget()
+        layout_keyboard = QtWidgets.QFormLayout()
+        
+        self.edit_ptt_key = QtWidgets.QLineEdit(str(self.temp_settings['ptt_key']))
+        layout_keyboard.addRow("PTT Key:", self.edit_ptt_key)
+        
+        help_label = QtWidgets.QLabel("Examples: ctrl_r, alt_l, shift, space, a, b, etc.")
+        help_label.setStyleSheet("color: gray; font-size: 9pt;")
+        layout_keyboard.addRow("", help_label)
+        
+        tab_keyboard.setLayout(layout_keyboard)
+        self.tabs.addTab(tab_keyboard, "Keyboard")
+        
+        # --- Zakładka: Antenna Switch ---
+        tab_antenna = QtWidgets.QWidget()
+        layout_antenna = QtWidgets.QFormLayout()
+        
+        self.check_antenna_enabled = QtWidgets.QCheckBox("Enable Antenna Switch")
+        self.check_antenna_enabled.setChecked(self.temp_settings['antenna_switch_enabled'])
+        
+        self.edit_antenna_1_name = QtWidgets.QLineEdit(str(self.temp_settings['antenna_1_name']))
+        self.edit_antenna_2_name = QtWidgets.QLineEdit(str(self.temp_settings['antenna_2_name']))
+        self.edit_antenna_3_name = QtWidgets.QLineEdit(str(self.temp_settings['antenna_3_name']))
+        
+        layout_antenna.addRow("", self.check_antenna_enabled)
+        layout_antenna.addRow("Antenna 1 Name:", self.edit_antenna_1_name)
+        layout_antenna.addRow("Antenna 2 Name:", self.edit_antenna_2_name)
+        layout_antenna.addRow("Antenna 3 Name:", self.edit_antenna_3_name)
+        
+        cmd_label = QtWidgets.QLabel("Commands are fixed: 1, 2, 3")
+        cmd_label.setStyleSheet("color: gray; font-size: 9pt;")
+        layout_antenna.addRow("", cmd_label)
+        
+        tab_antenna.setLayout(layout_antenna)
+        self.tabs.addTab(tab_antenna, "Antenna")
+        
+        # --- Zakładka: Waterfall ---
+        tab_waterfall = QtWidgets.QWidget()
+        layout_waterfall = QtWidgets.QFormLayout()
+        
+        self.check_waterfall_enabled = QtWidgets.QCheckBox("Enable Waterfall")
+        self.check_waterfall_enabled.setChecked(self.temp_settings['waterfall_enabled'])
+        
+        self.edit_initial_zoom = QtWidgets.QDoubleSpinBox()
+        self.edit_initial_zoom.setRange(0.05, 1.0)
+        self.edit_initial_zoom.setSingleStep(0.05)
+        self.edit_initial_zoom.setDecimals(2)
+        self.edit_initial_zoom.setValue(self.temp_settings['waterfall_initial_zoom'])
+        
+        self.edit_dynamic_range = QtWidgets.QSpinBox()
+        self.edit_dynamic_range.setRange(10, 100)
+        self.edit_dynamic_range.setSuffix(" dB")
+        self.edit_dynamic_range.setValue(self.temp_settings['waterfall_dynamic_range'])
+        
+        layout_waterfall.addRow("", self.check_waterfall_enabled)
+        layout_waterfall.addRow("Initial Zoom:", self.edit_initial_zoom)
+        layout_waterfall.addRow("Dynamic Range:", self.edit_dynamic_range)
+        
+        restart_label = QtWidgets.QLabel("⚠️ Requires restart to apply")
+        restart_label.setStyleSheet("color: orange; font-weight: bold;")
+        layout_waterfall.addRow("", restart_label)
+        
+        tab_waterfall.setLayout(layout_waterfall)
+        self.tabs.addTab(tab_waterfall, "Waterfall")
+        
+        # --- Zakładka: Filter Widths ---
+        tab_filters = QtWidgets.QWidget()
+        layout_filters = QtWidgets.QVBoxLayout()
+        
+        # Scroll area dla filtrów
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QtWidgets.QWidget()
+        layout_filters_form = QtWidgets.QFormLayout()
+        
+        self.filter_edits = {}
+        modes = ['usb', 'lsb', 'am', 'fm', 'cw', 'cwr']
+        widths = ['narrow', 'normal', 'wide']
+        
+        for mode in modes:
+            mode_label = QtWidgets.QLabel(f"\n{mode.upper()}")
+            mode_label.setStyleSheet("font-weight: bold; font-size: 11pt;")
+            layout_filters_form.addRow(mode_label)
+            
+            for width in widths:
+                key = f'filter_width_{mode}_{width}'
+                spinbox = QtWidgets.QSpinBox()
+                spinbox.setRange(50, 10000)
+                spinbox.setSuffix(" Hz")
+                spinbox.setValue(self.temp_settings[key])
+                self.filter_edits[key] = spinbox
+                layout_filters_form.addRow(f"  {width.capitalize()}:", spinbox)
+        
+        scroll_content.setLayout(layout_filters_form)
+        scroll.setWidget(scroll_content)
+        layout_filters.addWidget(scroll)
+        
+        tab_filters.setLayout(layout_filters)
+        self.tabs.addTab(tab_filters, "Filters")
+        
+        # --- Zakładka: Interface ---
+        tab_interface = QtWidgets.QWidget()
+        layout_interface = QtWidgets.QFormLayout()
+        
+        self.check_stay_on_top = QtWidgets.QCheckBox("Stay on Top")
+        self.check_stay_on_top.setChecked(self.temp_settings.get('stay_on_top', False))
+        
+        layout_interface.addRow("", self.check_stay_on_top)
+        
+        restart_label2 = QtWidgets.QLabel("⚠️ Requires restart to apply")
+        restart_label2.setStyleSheet("color: orange; font-weight: bold;")
+        layout_interface.addRow("", restart_label2)
+        
+        tab_interface.setLayout(layout_interface)
+        self.tabs.addTab(tab_interface, "Interface")
+        
+        # Dodaj zakładki do głównego layoutu
+        main_layout.addWidget(self.tabs)
+        
+        # Przyciski
+        button_box = QtWidgets.QDialogButtonBox()
+        
+        btn_save = button_box.addButton("Save", QtWidgets.QDialogButtonBox.AcceptRole)
+        btn_cancel = button_box.addButton("Cancel", QtWidgets.QDialogButtonBox.RejectRole)
+        btn_reset = button_box.addButton("Reset to Defaults", QtWidgets.QDialogButtonBox.ResetRole)
+        
+        button_box.accepted.connect(self.save_settings)
+        button_box.rejected.connect(self.reject)
+        btn_reset.clicked.connect(self.reset_to_defaults)
+        
+        main_layout.addWidget(button_box)
+        
+        self.setLayout(main_layout)
+    
+    def save_settings(self):
+        """Zapisuje ustawienia do temp_settings i zamyka dialog"""
+        # Connection
+        self.temp_settings['host'] = self.edit_host.text().strip()
+        self.temp_settings['port'] = self.edit_port.value()
+        self.temp_settings['poll_ms'] = self.edit_poll_ms.value()
+        
+        # Radio
+        self.temp_settings['freq_step_slow'] = self.edit_freq_step_slow.value()
+        self.temp_settings['freq_step_fast'] = self.edit_freq_step_fast.value()
+        self.temp_settings['mouse_wheel_freq_step'] = self.edit_mouse_wheel_freq.value()
+        self.temp_settings['mouse_wheel_fast_freq_step'] = self.edit_mouse_wheel_fast_freq.value()
+        self.temp_settings['tx_off_delay'] = self.edit_tx_off_delay.value()
+        self.temp_settings['default_noise_reduction'] = self.edit_default_nr.value()
+        
+        # Keyboard
+        self.temp_settings['ptt_key'] = self.edit_ptt_key.text().strip()
+        
+        # Antenna
+        self.temp_settings['antenna_switch_enabled'] = self.check_antenna_enabled.isChecked()
+        self.temp_settings['antenna_1_name'] = self.edit_antenna_1_name.text().strip()
+        self.temp_settings['antenna_2_name'] = self.edit_antenna_2_name.text().strip()
+        self.temp_settings['antenna_3_name'] = self.edit_antenna_3_name.text().strip()
+        
+        # Waterfall
+        self.temp_settings['waterfall_enabled'] = self.check_waterfall_enabled.isChecked()
+        self.temp_settings['waterfall_initial_zoom'] = self.edit_initial_zoom.value()
+        self.temp_settings['waterfall_dynamic_range'] = self.edit_dynamic_range.value()
+        
+        # Filters
+        for key, spinbox in self.filter_edits.items():
+            self.temp_settings[key] = spinbox.value()
+        
+        # Interface
+        self.temp_settings['stay_on_top'] = self.check_stay_on_top.isChecked()
+        
+        # Aktualizuj główną konfigurację
+        self.config.settings = self.temp_settings.copy()
+        
+        # Zapisz do pliku
+        if self.config.save():
+            self.accept()
+        else:
+            QtWidgets.QMessageBox.warning(
+                self, 
+                "Error", 
+                "Failed to save settings to file."
+            )
+    
+    def reset_to_defaults(self):
+        """Resetuje wszystkie ustawienia do wartości domyślnych"""
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Reset to Defaults",
+            "Are you sure you want to reset all settings to default values?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No
+        )
+        
+        if reply == QtWidgets.QMessageBox.Yes:
+            self.config.reset_to_defaults()
+            self.temp_settings = self.config.settings.copy()
+            # Odśwież wszystkie pola
+            self.refresh_all_fields()
+    
+    def refresh_all_fields(self):
+        """Odświeża wszystkie pola w dialogu"""
+        # Connection
+        self.edit_host.setText(str(self.temp_settings['host']))
+        self.edit_port.setValue(self.temp_settings['port'])
+        self.edit_poll_ms.setValue(self.temp_settings['poll_ms'])
+        
+        # Radio
+        self.edit_freq_step_slow.setValue(self.temp_settings['freq_step_slow'])
+        self.edit_freq_step_fast.setValue(self.temp_settings['freq_step_fast'])
+        self.edit_mouse_wheel_freq.setValue(self.temp_settings['mouse_wheel_freq_step'])
+        self.edit_mouse_wheel_fast_freq.setValue(self.temp_settings['mouse_wheel_fast_freq_step'])
+        self.edit_tx_off_delay.setValue(self.temp_settings['tx_off_delay'])
+        self.edit_default_nr.setValue(self.temp_settings['default_noise_reduction'])
+        
+        # Keyboard
+        self.edit_ptt_key.setText(str(self.temp_settings['ptt_key']))
+        
+        # Antenna
+        self.check_antenna_enabled.setChecked(self.temp_settings['antenna_switch_enabled'])
+        self.edit_antenna_1_name.setText(str(self.temp_settings['antenna_1_name']))
+        self.edit_antenna_2_name.setText(str(self.temp_settings['antenna_2_name']))
+        self.edit_antenna_3_name.setText(str(self.temp_settings['antenna_3_name']))
+        
+        # Waterfall
+        self.check_waterfall_enabled.setChecked(self.temp_settings['waterfall_enabled'])
+        self.edit_initial_zoom.setValue(self.temp_settings['waterfall_initial_zoom'])
+        self.edit_dynamic_range.setValue(self.temp_settings['waterfall_dynamic_range'])
+        
+        # Filters
+        for key, spinbox in self.filter_edits.items():
+            spinbox.setValue(self.temp_settings[key])
+        
+        # Interface
+        self.check_stay_on_top.setChecked(self.temp_settings.get('stay_on_top', False))
 
 
 class PollWorker(QtCore.QObject):
@@ -1111,7 +1538,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.setGeometry(int((sizeObject.width() - windowWidth) / 2), sizeObject.height() - windowHeight - 48, windowWidth, windowHeight)
 
-        # self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        # Stay on top based on config
+        if config.get('stay_on_top', False):
+            self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        
         self.setWindowIcon(QIcon("logo.ico"))
 
         # self.setWindowOpacity(0.8)
@@ -1127,6 +1557,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.current_freq = 14074000  # Hz (odczyt z rigctld)
         self.vfoa_freq = self.current_freq
         self.vfob_freq = self.current_freq
+        self.vfoa_mode = 'USB'
+        self.vfob_mode = 'USB'
+        self.vfoa_width = FILTER_WIDTH_USB_NORMAL
+        self.vfob_width = FILTER_WIDTH_USB_NORMAL
         self.mode = 'USB'
 
         central = QtWidgets.QWidget()
@@ -1224,6 +1658,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # self.nb_btn.setFont(QtGui.QFont("Monospace", 7))
         self.nb_btn.clicked.connect(self.nb_btn_clicked)
         self.nb_active = 0
+        self.att_val = 0
+        self.ipo_val = 0
 
         self.tuner_status = DoubleClickButton()
         self.tuner_status.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
@@ -1658,6 +2094,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if PLAYER_ACTIVE:
             top_row.addWidget(self.player_group)
         top_row.addStretch()
+        
+        # Settings button - ostatni w top_row
+        self.settings_btn = QtWidgets.QPushButton("Settings")
+        self.settings_btn.setFixedSize(SMALL_BTN_WIDTH + 10, SMALL_BTN_HEIGHT)
+        self.settings_btn.setStyleSheet("background-color: " + "#d0d0d0" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.settings_btn.clicked.connect(self.open_settings)
+        top_row.addWidget(self.settings_btn)
 
         self.smeter_row = QtWidgets.QHBoxLayout()
         self.smeter_row.addWidget(self.s_meter)
@@ -2113,7 +2556,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def parse_get_freq(self, val):
         freq = int(val.split('Frequency: ')[1].split('\n')[0])
-        updated_needed = True
+        updated_needed = False
 
         if freq != self.current_freq:
             updated_needed = True
@@ -2202,171 +2645,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.parse_powerstat(resp)
             else:
                 print('Error in response: RPRT ' + resp.split('RPRT ')[0])
-
-        return
-
-        if self.ignore_next_data_switch:
-            if self.ignore_next_data_cnt:
-                # Do it only for one time
-                if key == "SQ0":
-                    self.ignore_next_data_cnt = self.ignore_next_data_cnt - 1
-                # print('dupa')
-                return
-            else:
-                self.ignore_next_data_switch = False
-
-        if key == "SQ0":
-            if val is not None:
-                if not self.knob_squelch.user_active:
-                    self.current_sql = val
-                    self.knob_squelch.set_value(val)
-        elif key == "AG0":
-            if val is not None:
-                if not self.knob_volume.user_active:
-                    self.current_vol = val
-                    self.knob_volume.set_value(val)
-        elif key == "RM1":
-            if val is not None:
-                self.s_meter.setRange(0, 255)
-                self.s_meter.setValue(val)
-                s_label = self.s_meter_label(val)
-                self.s_meter.setFormat(f"S: {s_label:>7}")
-        elif key == "RM4":
-            if val is not None:
-                self.alc_meter.setRange(0, 255)
-                self.alc_meter.setValue(val)
-                alc_label = int(val / 255 * 100)
-                self.alc_meter.setFormat(f"ALC: {alc_label:>5}")
-        elif key == "RM5":
-            if val is not None:
-                self.po_meter.setRange(0, 255)
-                self.po_meter.setValue(val)
-                po_label = int(val / 255 * 100)
-                self.po_meter.setFormat(f"PO: {po_label:>6}")
-        elif key == "RM6":
-            if val is not None:
-                self.swr_meter.setRange(0, 255)
-                self.swr_meter.setValue(val)
-                swr_label = self.swr_label(val)
-                self.swr_meter.setFormat(f"SWR: {swr_label:>5}")
-        elif key == "FA":
-            if val is not None:
-                self.vfoa_freq = val
-                if not self.active_vfo:
-                    self.set_frequency_label(self.freq_display, val)
-                    self.current_freq = self.vfoa_freq
-                    self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode_label.text())
-                    self.active_vfo_label.setText("VFO A")
-                else:
-                    self.set_frequency_label(self.freq_display_sub, val)
-        elif key == "FB":
-            if val is not None:
-                self.vfob_freq = val
-                if self.active_vfo:
-                    self.set_frequency_label(self.freq_display, val)
-                    self.current_freq = self.vfob_freq
-                    self.waterfall_freq_update.emit(self.current_freq, self.filter_width, self.mode_label.text())
-                    self.active_vfo_label.setText("VFO B")
-                else:
-                    self.set_frequency_label(self.freq_display_sub, val)
-        elif key == "PC":
-            if val is not None:
-                self.tx_power_btn.setText(str(val) + "W")
-        elif key == "VS":
-            if val is not None:
-                self.active_vfo = val
-        elif key == "RA0":
-            if val is not None:
-                if val:
-                    self.att_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-                    self.att_val = 1
-                else:
-                    self.att_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-                    self.att_val = 0
-        elif key == "PA0":
-            if val is not None:
-                if val:
-                    self.ipo_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-                    self.ipo_val = 1
-                else:
-                    self.ipo_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-                    self.ipo_val = 0
-        elif key == "AC":
-            if val is not None:
-                if val:
-                    self.tuner_status.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-                    self.tuner_status_val = 1
-                else:
-                    self.tuner_status.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-                    self.tuner_status_val = 0
-        elif key == "TX":
-            if val is not None:
-                if val:
-                    self.tx_active = 1
-                    self.centralWidget().setStyleSheet("background-color: red;")
-                    temp = self.windowTitle()
-                    if not "[TX]" in temp:
-                        self.setWindowTitle("[TX] " + temp)
-                    self.replace_s_meter_when_tx(1)
-                else:
-                    self.tx_active = 0
-                    self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
-                    self.centralWidget().setStyleSheet("")
-                    self.replace_s_meter_when_tx(0)
-        elif key == "NB0":
-            if val is not None:
-                if val:
-                    self.nb_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-                    self.nb_active = 1
-                else:
-                    self.nb_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-                    self.nb_active = 0
-        elif key == "PS":
-            if val is not None:
-                self.client.trx_power_status = val
-                if val:
-                    self.power_btn.setText("OFF")
-                    self.power_btn.setStyleSheet("border-radius: 14px; background-color: #fa6060; border: 1px solid black;")
-                else:
-                    # TODO: all values can be zeroed
-                    self.power_btn.setText("ON")
-                    self.power_btn.setStyleSheet("border-radius: 14px; background-color: #60fa60; border: 1px solid black;")
-        elif key == "MD0":
-            if val is not None:
-                self.mode_label.setText(radioModesRx[val])
-        elif key == "ML0":
-            if val is not None:
-                if val == 0:
-                    self.monitor_active = 0
-                    self.monitor_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-                elif val == 1:
-                    self.monitor_active = 1
-                    self.monitor_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-        elif key == "SH0":
-            if val is not None:
-                if val <= 10:
-                    self.filter_width = globals()['FILTER_WIDTH_' + self.mode_label.text() + '_NARROW']
-
-                    self.filter_narrow.setChecked(True)
-                elif val > 10 and val <= 21:
-                    self.filter_width = globals()['FILTER_WIDTH_' + self.mode_label.text() + '_NORMAL']
-
-                    self.filter_normal.setChecked(True)
-                elif val > 21 and val <= 31:
-                    self.filter_width = globals()['FILTER_WIDTH_' + self.mode_label.text() + '_WIDE']
-
-                    self.filter_wide.setChecked(True)
-        elif key == "IS0":
-            if val is not None:
-                # self.shift_slider.setValue(val)
-                pass
-
-        elif key == "BP00":
-            if val is not None:
-                if val:
-                    self.notch_group.setChecked(True)
-                else:
-                    self.notch_group.setChecked(False)
 
     def update_mode_display(self):
         for mode, label in self.mode_labels.items():
@@ -2831,6 +3109,56 @@ class MainWindow(QtWidgets.QMainWindow):
             new_freq = dlg.get_value()
             self.frequency_change(new_freq)
 
+    def open_settings(self):
+        """Otwiera dialog ustawień"""
+        dlg = SettingsDialog(self, config)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            # Po zapisaniu ustawień, zaktualizuj elementy UI które można zmienić bez restartu
+            self.update_from_config()
+            
+            QtWidgets.QMessageBox.information(
+                self,
+                "Settings Applied",
+                "Some settings have been applied.\nRestart the application for all changes to take effect."
+            )
+    
+    def update_from_config(self):
+        """Aktualizuje elementy UI z aktualnej konfiguracji (bez restartu)"""
+        global HOST, PORT, POLL_MS, FREQ_STEP_SLOW, FREQ_STEP_FAST, TX_OFF_DELAY, PTT_KEY
+        global ANTENNA_1_NAME, ANTENNA_2_NAME, ANTENNA_3_NAME
+        global MOUSE_WHEEL_FREQ_STEP, MOUSE_WHEEL_FAST_FREQ_STEP, DEFAULT_NOISE_REDUCTION
+        
+        # Zaktualizuj globalne zmienne
+        HOST = config.get('host')
+        PORT = config.get('port')
+        POLL_MS = config.get('poll_ms')
+        FREQ_STEP_SLOW = config.get('freq_step_slow')
+        FREQ_STEP_FAST = config.get('freq_step_fast')
+        TX_OFF_DELAY = config.get('tx_off_delay')
+        PTT_KEY = config.get('ptt_key')
+        ANTENNA_1_NAME = config.get('antenna_1_name')
+        ANTENNA_2_NAME = config.get('antenna_2_name')
+        ANTENNA_3_NAME = config.get('antenna_3_name')
+        MOUSE_WHEEL_FREQ_STEP = config.get('mouse_wheel_freq_step')
+        MOUSE_WHEEL_FAST_FREQ_STEP = config.get('mouse_wheel_fast_freq_step')
+        DEFAULT_NOISE_REDUCTION = config.get('default_noise_reduction')
+        
+        # Zaktualizuj nazwy anten w UI
+        if hasattr(self, 'antenna_1'):
+            self.antenna_1.setText(ANTENNA_1_NAME)
+            self.antenna_2.setText(ANTENNA_2_NAME)
+            self.antenna_3.setText(ANTENNA_3_NAME)
+        
+        # Zaktualizuj PTT button label
+        self.ptt_btn.setText(f"PTT\\n({PTT_KEY})")
+        
+        # Stay on top
+        if config.get('stay_on_top'):
+            self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        else:
+            self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowStaysOnTopHint)
+        self.show()  # Trzeba pokazać okno ponownie po zmianie flag
+
 
     def cmb_smeter_change(self):
         if self.cmb_smeter.currentText() == 'ALC':
@@ -2871,7 +3199,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.send_tx_signal.emit(0)
         self.swr_btn.setStyleSheet("background-color: " + "#e6bb4f" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
 
-        QTimer.singleShot(TX_OFF_DELAY + 20, self.stop_swr_check)
+        QTimer.singleShot(TX_OFF_DELAY, self.stop_swr_check)
 
     def miceq_btn_btn_pressed(self):
         cmd = "EX037"
@@ -2917,7 +3245,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_sound_finished(self, widget):
         self.send_tx_signal.emit(0)
         widget.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
-        QTimer.singleShot(TX_OFF_DELAY + 20, self.disable_monitor)
+        QTimer.singleShot(TX_OFF_DELAY, self.disable_monitor)
 
     def disable_monitor(self):
         cmd = f"U MON 0"
