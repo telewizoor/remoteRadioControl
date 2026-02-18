@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
 import socket
@@ -19,23 +19,23 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 
 ### --- Configuration Class --- ###
 class Config:
-    """Klasa zarządzająca konfiguracją aplikacji"""
+    """Class managing application configuration"""
     
     LAST_CONFIG_FILE = 'last_config.txt'
     
     def __init__(self, config_file='config.json'):
-        # Jeśli config_file jest pełną ścieżką, użyj jej bezpośrednio
+        # If config_file is a full path, use it directly
         if os.path.isabs(config_file):
             self.config_file = config_file
         else:
-            # W przeciwnym razie użyj dir_path
+            # Otherwise use dir_path
             self.config_file = os.path.join(dir_path, config_file)
         self.defaults = self._get_defaults()
         self.settings = self.defaults.copy()
         self.load()
     
     def _get_defaults(self):
-        """Zwraca domyślne ustawienia"""
+        """Returns default settings"""
         return {
             # Connection
             'host': "192.168.152.12",
@@ -91,23 +91,23 @@ class Config:
         }
     
     def load(self):
-        """Wczytuje konfigurację z pliku JSON"""
+        """Loads configuration from JSON file"""
         try:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     loaded = json.load(f)
-                    # Merguje załadowane ustawienia z domyślnymi
+                    # Merges loaded settings with defaults
                     self.settings.update(loaded)
                 print(f"Configuration loaded from {self.config_file}")
             else:
                 print(f"Config file not found, using defaults")
-                self.save()  # Zapisz domyślną konfigurację
+                self.save()  # Save default configuration
         except Exception as e:
             print(f"Error loading config: {e}, using defaults")
             self.settings = self.defaults.copy()
     
     def save(self):
-        """Zapisuje konfigurację do pliku JSON"""
+        """Saves configuration to JSON file"""
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.settings, f, indent=4, ensure_ascii=False)
@@ -118,19 +118,19 @@ class Config:
             return False
     
     def get(self, key, default=None):
-        """Pobiera wartość ustawienia"""
+        """Gets setting value"""
         return self.settings.get(key, default)
     
     def set(self, key, value):
-        """Ustawia wartość ustawienia"""
+        """Sets setting value"""
         self.settings[key] = value
     
     def reset_to_defaults(self):
-        """Resetuje ustawienia do wartości domyślnych"""
+        """Resets settings to default values"""
         self.settings = self.defaults.copy()
     
     def save_last_config_name(self):
-        """Zapisuje nazwę aktualnego pliku konfiguracji jako ostatnio używany"""
+        """Saves current configuration file name as last used"""
         try:
             last_config_path = os.path.join(dir_path, self.LAST_CONFIG_FILE)
             with open(last_config_path, 'w') as f:
@@ -142,7 +142,7 @@ class Config:
     
     @staticmethod
     def get_last_config_name():
-        """Odczytuje nazwę ostatnio używanego pliku konfiguracji"""
+        """Reads last used configuration file name"""
         try:
             last_config_path = os.path.join(dir_path, Config.LAST_CONFIG_FILE)
             if os.path.exists(last_config_path):
@@ -152,10 +152,10 @@ class Config:
                         return config_file
         except Exception as e:
             print(f"Error reading last config name: {e}")
-        # Jeśli nie udało się odczytać, zwróć domyślny plik
+        # If reading failed, return default file
         return os.path.join(dir_path, 'config.json')
 
-# Globalna instancja konfiguracji
+# Global configuration instance
 last_config_file = Config.get_last_config_name()
 config = Config(last_config_file)
 
@@ -276,7 +276,7 @@ MOUSE_WHEEL_FAST_FREQ_STEP = config.get('mouse_wheel_fast_freq_step')
 WATERFALL_MARGIN   = 32
 MAJOR_THICK_HEIGHT = 12
 MINOR_TICK_HEIGHT  = 6
-MINOR_TICKS_PER_MAJOR = 10  # ile ticków pomiędzy głównymi (0 = brak)
+MINOR_TICKS_PER_MAJOR = 10  # how many ticks between major ones (0 = none)
 
 HAM_BANDS = [
     ("160m", 1_800_000, 2_000_000),
@@ -401,7 +401,7 @@ class EqDialog(QtWidgets.QDialog):
 
         self.buttons = []
 
-        # Tworzenie radiobuttonów
+        # Creating radio buttons
         for i, label in enumerate(EQ_OPTIONS):
             rb = QtWidgets.QRadioButton(f"{i}: {label}")
             mono = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
@@ -420,7 +420,7 @@ class EqDialog(QtWidgets.QDialog):
         self.setLayout(layout)
 
     def accept(self):
-        # znajdź wybrany preset
+        # find selected preset
         for i, rb in enumerate(self.buttons):
             if rb.isChecked():
                 self.selected_eq = i
@@ -440,18 +440,18 @@ class SliderDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Set value")
 
-        # Slider od 5 do 100
+        # Slider from 5 to 100
         self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.slider.setRange(5, 100)
         self.slider.setValue(value)
 
-        # Etykieta pokazująca aktualną wartość
+        # Label showing current value
         self.label = QtWidgets.QLabel(str(self.slider.value()))
         self.slider.valueChanged.connect(lambda v: self.label.setText(str(v)))
 
-        # Przycisk 'Ustaw'
+        # 'Set' button
         self.button = QtWidgets.QPushButton("Set")
-        self.button.clicked.connect(self.accept)  # zamyka dialog
+        self.button.clicked.connect(self.accept)  # closes dialog
 
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(self.label)
@@ -467,13 +467,13 @@ class FrequencyDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Set Frequency (Hz)")
 
-        # Pole tekstowe
+        # Text field
         self.edit = QtWidgets.QLineEdit(str(value))
 
-        # Etykieta opisu
+        # Description label
         label = QtWidgets.QLabel("Enter frequency (0 - 52 000 000 Hz):")
 
-        # Przycisk 'Set'
+        # 'Set' button
         self.button = QtWidgets.QPushButton("Set")
         self.button.clicked.connect(self.on_accept)
 
@@ -486,28 +486,28 @@ class FrequencyDialog(QtWidgets.QDialog):
     def on_accept(self):
         text = self.edit.text().strip()
 
-        # sprawdzamy czy liczba
+        # check if number
         if not text.isdigit():
             QtWidgets.QMessageBox.warning(self, "Error", "Please enter a valid integer number.")
             return
 
         value = int(text)
 
-        # sprawdzenie zakresu
+        # check range
         if not (0 <= value <= 52000000):
             QtWidgets.QMessageBox.warning(
                 self, "Error", "Frequency must be between 0 and 52,000,000 Hz."
             )
             return
 
-        self.accept()  # zamyka dialog jeśli OK
+        self.accept()  # closes dialog if OK
 
     def get_value(self):
         return int(self.edit.text())
 
 
 class SettingsDialog(QtWidgets.QDialog):
-    """Dialog ustawień aplikacji z zakładkami"""
+    """Application settings dialog with tabs"""
     
     def __init__(self, parent=None, current_config=None):
         super().__init__(parent)
@@ -518,13 +518,13 @@ class SettingsDialog(QtWidgets.QDialog):
         self.config = current_config or config
         self.temp_settings = self.config.settings.copy()
         
-        # Główny layout
+        # Main layout
         main_layout = QtWidgets.QVBoxLayout()
         
-        # Zakładki
+        # Tabs
         self.tabs = QtWidgets.QTabWidget()
         
-        # --- Zakładka: Connection ---
+        # --- Tab: Connection ---
         tab_connection = QtWidgets.QWidget()
         layout_conn = QtWidgets.QFormLayout()
         
@@ -559,7 +559,7 @@ class SettingsDialog(QtWidgets.QDialog):
         tab_connection.setLayout(layout_conn)
         self.tabs.addTab(tab_connection, "Connection")
         
-        # --- Zakładka: Radio Settings ---
+        # --- Tab: Radio Settings ---
         tab_radio = QtWidgets.QWidget()
         layout_radio = QtWidgets.QFormLayout()
         
@@ -602,7 +602,7 @@ class SettingsDialog(QtWidgets.QDialog):
         tab_radio.setLayout(layout_radio)
         self.tabs.addTab(tab_radio, "Radio")
         
-        # --- Zakładka: Keyboard ---
+        # --- Tab: Keyboard ---
         tab_keyboard = QtWidgets.QWidget()
         layout_keyboard = QtWidgets.QFormLayout()
         
@@ -616,7 +616,7 @@ class SettingsDialog(QtWidgets.QDialog):
         tab_keyboard.setLayout(layout_keyboard)
         self.tabs.addTab(tab_keyboard, "Keyboard")
         
-        # --- Zakładka: Antenna Switch ---
+        # --- Tab: Antenna Switch ---
         tab_antenna = QtWidgets.QWidget()
         layout_antenna = QtWidgets.QFormLayout()
         
@@ -639,7 +639,7 @@ class SettingsDialog(QtWidgets.QDialog):
         tab_antenna.setLayout(layout_antenna)
         self.tabs.addTab(tab_antenna, "Antenna")
         
-        # --- Zakładka: Waterfall ---
+        # --- Tab: Waterfall ---
         tab_waterfall = QtWidgets.QWidget()
         layout_waterfall = QtWidgets.QFormLayout()
         
@@ -668,11 +668,11 @@ class SettingsDialog(QtWidgets.QDialog):
         tab_waterfall.setLayout(layout_waterfall)
         self.tabs.addTab(tab_waterfall, "Waterfall")
         
-        # --- Zakładka: Filter Widths ---
+        # --- Tab: Filter Widths ---
         tab_filters = QtWidgets.QWidget()
         layout_filters = QtWidgets.QVBoxLayout()
         
-        # Scroll area dla filtrów
+        # Scroll area for filters
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll_content = QtWidgets.QWidget()
@@ -703,7 +703,7 @@ class SettingsDialog(QtWidgets.QDialog):
         tab_filters.setLayout(layout_filters)
         self.tabs.addTab(tab_filters, "Filters")
         
-        # --- Zakładka: Interface ---
+        # --- Tab: Interface ---
         tab_interface = QtWidgets.QWidget()
         layout_interface = QtWidgets.QFormLayout()
         
@@ -719,10 +719,10 @@ class SettingsDialog(QtWidgets.QDialog):
         tab_interface.setLayout(layout_interface)
         self.tabs.addTab(tab_interface, "Interface")
         
-        # Dodaj zakładki do głównego layoutu
+        # Add tabs to main layout
         main_layout.addWidget(self.tabs)
         
-        # Przyciski
+        # Buttons
         button_box = QtWidgets.QDialogButtonBox()
         
         btn_save = button_box.addButton("Save", QtWidgets.QDialogButtonBox.AcceptRole)
@@ -738,16 +738,16 @@ class SettingsDialog(QtWidgets.QDialog):
         self.setLayout(main_layout)
     
     def save_settings(self):
-        """Zapisuje ustawienia do temp_settings i zamyka dialog"""
-        # Zaktualizuj temp_settings z pól
+        """Saves settings to temp_settings and closes dialog"""
+        # Update temp_settings from fields
         self.update_temp_settings_from_fields()
         
-        # Aktualizuj główną konfigurację
+        # Update main configuration
         self.config.settings = self.temp_settings.copy()
         
-        # Zapisz do pliku
+        # Save to file
         if self.config.save():
-            # Zapisz nazwę tego pliku jako ostatnio używany
+            # Save this file name as last used
             self.config.save_last_config_name()
             self.accept()
         else:
@@ -758,7 +758,7 @@ class SettingsDialog(QtWidgets.QDialog):
             )
     
     def reset_to_defaults(self):
-        """Resetuje wszystkie ustawienia do wartości domyślnych"""
+        """Resets all settings to default values"""
         reply = QtWidgets.QMessageBox.question(
             self,
             "Reset to Defaults",
@@ -770,11 +770,11 @@ class SettingsDialog(QtWidgets.QDialog):
         if reply == QtWidgets.QMessageBox.Yes:
             self.config.reset_to_defaults()
             self.temp_settings = self.config.settings.copy()
-            # Odśwież wszystkie pola
+            # Refresh all fields
             self.refresh_all_fields()
     
     def select_config_file(self):
-        """Wybór pliku konfiguracji"""
+        """Select configuration file"""
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             "Select Configuration File",
@@ -783,22 +783,22 @@ class SettingsDialog(QtWidgets.QDialog):
         )
         
         if file_path:
-            # Załaduj wybraną konfigurację
+            # Load selected configuration
             new_config = Config(file_path)
             self.config = new_config
             self.temp_settings = self.config.settings.copy()
             
-            # Zapisz nazwę tego pliku jako ostatnio używany
+            # Save this file name as last used
             self.config.save_last_config_name()
             
-            # Zaktualizuj nazwę pliku w UI
+            # Update file name in UI
             self.config_file_label.setText(os.path.basename(file_path))
             
-            # Odśwież wszystkie pola
+            # Refresh all fields
             self.refresh_all_fields()
     
     def save_config_as(self):
-        """Zapisz aktualną konfigurację do nowego pliku"""
+        """Save current configuration to new file"""
         file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self,
             "Save Configuration As",
@@ -807,22 +807,22 @@ class SettingsDialog(QtWidgets.QDialog):
         )
         
         if file_path:
-            # Upewnij się, że plik ma rozszerzenie .json
+            # Ensure file has .json extension
             if not file_path.endswith('.json'):
                 file_path += '.json'
             
-            # Zaktualizuj temp_settings z aktualnych wartości pól
+            # Update temp_settings from current field values
             self.update_temp_settings_from_fields()
             
-            # Stwórz nową konfigurację z tym plikiem
+            # Create new configuration with this file
             new_config = Config(file_path)
             new_config.settings = self.temp_settings.copy()
             
-            # Zapisz do nowego pliku
+            # Save to new file
             if new_config.save():
-                # Przełącz się na nowy plik
+                # Switch to new file
                 self.config = new_config
-                # Zapisz nazwę tego pliku jako ostatnio używany
+                # Save this file name as last used
                 self.config.save_last_config_name()
                 self.config_file_label.setText(os.path.basename(file_path))
                 
@@ -839,7 +839,7 @@ class SettingsDialog(QtWidgets.QDialog):
                 )
     
     def update_temp_settings_from_fields(self):
-        """Aktualizuje temp_settings z aktualnych wartości w polach dialogu"""
+        """Updates temp_settings from current values in dialog fields"""
         # Connection
         self.temp_settings['host'] = self.edit_host.text().strip()
         self.temp_settings['port'] = self.edit_port.value()
@@ -875,7 +875,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.temp_settings['stay_on_top'] = self.check_stay_on_top.isChecked()
     
     def refresh_all_fields(self):
-        """Odświeża wszystkie pola w dialogu"""
+        """Refreshes all fields in dialog"""
         # Connection
         self.edit_host.setText(str(self.temp_settings['host']))
         self.edit_port.setValue(self.temp_settings['port'])
@@ -933,11 +933,11 @@ class PollWorker(QtCore.QObject):
         self._timer.setInterval(self.poll_ms)
         self._timer.timeout.connect(self.poll_all)
         self._timer.start()
-        self.poll_all()  # pierwszy odczyt
+        self.poll_all()  # first read
 
     @QtCore.pyqtSlot(int)
     def pause(self, ms: int):
-        """Zatrzymuje polling na podany czas (ms)."""
+        """Stops polling for specified time (ms)."""
         if self._timer and self._timer.isActive():
             self._timer.stop()
             # print('pause')
@@ -945,7 +945,7 @@ class PollWorker(QtCore.QObject):
 
     @QtCore.pyqtSlot()
     def resume(self):
-        """Wznawia polling."""
+        """Resumes polling."""
         self.retry_cnt = 0
         self._timer.setInterval(self.poll_ms)
         # print(self.poll_ms)
@@ -961,7 +961,7 @@ class PollWorker(QtCore.QObject):
 
     @QtCore.pyqtSlot(str)
     def on_reset_one_time(self, cmd: str):
-        """Pozwala ponownie wykonać pojedynczy odczyt polecenia oneTime."""
+        """Allows re-execution of oneTime command read."""
         if cmd in self.one_time_done:
             self.one_time_done.remove(cmd)
         elif cmd == 'all':
@@ -983,15 +983,15 @@ class PollWorker(QtCore.QObject):
             command = param['cmd']
             is_one_time = param.get('oneTime', False)
 
-            # pomijamy oneTime, jeśli już wykonane
+            # skip oneTime if already executed
             if is_one_time and command in self.one_time_done:
                 continue
 
-            # pomijamy przy TX (opcjonalnie)
+            # skip during TX (optional)
             if getattr(self, "tx_active", 0) == 1 and is_one_time:
                 continue
 
-            # dodajemy komendę do zestawu
+            # add command to set
             cmd += '+' + command + ' '
 
         cmd += '\n'
@@ -1014,20 +1014,20 @@ class PollWorker(QtCore.QObject):
 
         for part in parts:
             if re.match(r'RPRT [+-]?\d+', part):
-                # to jest końcowy znacznik -> dodaj do aktualnego bloku i zamknij blok
+                # this is the end marker -> add to current block and close block
                 tmp += part + "\n"
                 respArray.append(tmp)
                 tmp = ""
             else:
-                # część danych
+                # data part
                 tmp += part
 
-        # usuwamy puste elementy
+        # remove empty elements
         respArray =  [b for b in respArray if b.strip()]
         # print(respArray)
         self.result.emit(respArray)
 
-        # oznaczamy oneTime jako wykonane
+        # mark oneTime as executed
         for item in respArray:
             if 'RPRT 0' in item:
                 for param in cyclicRefreshParams:
@@ -1051,11 +1051,11 @@ class DoubleClickButton(QtWidgets.QPushButton):
 
     def mousePressEvent(self, event):
         if self._click_timer.isActive():
-            # znaczy, że drugi klik nastąpił zanim timer się wyzerował -> double click
+            # means second click occurred before timer was reset -> double click
             self._click_timer.stop()
             self.doubleClicked.emit()
         else:
-            # odpalamy timer i czekamy czy nadejdzie drugi klik
+            # start timer and wait if second click comes
             self._click_timer.start(QtWidgets.QApplication.doubleClickInterval())
         super().mousePressEvent(event)
 
@@ -1131,9 +1131,9 @@ def draw_line(data: np.ndarray, palette: np.ndarray, min_db=-120.0, max_db=-30.0
     return rgb_row
 
 class WaterfallWidget(QtWidgets.QWidget):
-    freq_clicked = QtCore.pyqtSignal(int)   # emitowane kiedy użytkownik kliknie/wybiera freq
-    freq_hover = QtCore.pyqtSignal(int)     # emitowane kiedy porusza myszką (pozycja)
-    freq_selected = QtCore.pyqtSignal(int)     # emitowane kiedy porusza myszką (pozycja)
+    freq_clicked = QtCore.pyqtSignal(int)   # emitted when user clicks/selects freq
+    freq_hover = QtCore.pyqtSignal(int)     # emitted when mouse moves (position)
+    freq_selected = QtCore.pyqtSignal(int)     # emitted when mouse moves (position)
     new_min_db = QtCore.pyqtSignal(int)
     adjust_waterfall = QtCore.pyqtSignal()
 
@@ -1144,7 +1144,7 @@ class WaterfallWidget(QtWidgets.QWidget):
         self.height_px = int(height/2)
         self.setMinimumSize(400, int(height/2))
 
-        # QImage jako bufor tylko do wyświetlania; trzymamy też _buffer (numpy) żeby bezpiecznie modyfikować
+        # QImage as buffer only for display; we also keep _buffer (numpy) to safely modify
         self._image = QtGui.QImage(self.width_px, self.height_px, QtGui.QImage.Format_RGB888)
         self._image.fill(QtGui.QColor('black'))
         self._buffer = np.zeros((self.height_px, self.width_px, 3), dtype=np.uint8)
@@ -1170,7 +1170,7 @@ class WaterfallWidget(QtWidgets.QWidget):
         self._press_x = None
         self._press_y = None
 
-        # częstotliwości - będą aktualizowane z WsReceiver
+        # frequencies - will be updated from WsReceiver
         self.samp_rate = 1000000
         self.center_freq = 14250000
         self.selected_freq = self.center_freq
@@ -1219,11 +1219,11 @@ class WaterfallWidget(QtWidgets.QWidget):
         self.mode = mode
 
         if not self.initial_zoom_set and self.waterfall_config_received and self.fft_avg != 0:
-            # modyfikacja zoomu
+            # zoom modification
             self.zoom_factor = INITIAL_ZOOM
-            # ograniczenia zoomu
+            # zoom limits
             self.zoom_factor = max(0.05, min(1.0, self.zoom_factor))
-            # zmiana środka widoku, aby utrzymać tę samą częstotliwość pod kursorem
+            # change view center to keep the same frequency under cursor
             if hasattr(self, "samp_rate") and self.samp_rate > 0:
                 full_bw = self.samp_rate
                 start_freq = self.center_freq - self.samp_rate/2
@@ -1246,17 +1246,17 @@ class WaterfallWidget(QtWidgets.QWidget):
         self.width_px = new_size.width()
         self.height_px = new_size.height()
 
-        # utwórz nowy QImage i bufor numpy dopasowany do nowego rozmiaru
+        # create new QImage and numpy buffer matched to new size
         self._image = QtGui.QImage(self.width_px, self.height_px, QtGui.QImage.Format_RGB888)
         self._image.fill(QtGui.QColor('black'))
 
         with self._lock:
             self._buffer = np.zeros((self.height_px, self.width_px, 3), dtype=np.uint8)
 
-        # możesz opcjonalnie odświeżyć widok
+        # you can optionally refresh view
         self.update()
 
-        # wywołaj oryginalne zachowanie (dobre praktyki)
+        # call original behavior (good practice)
         super().resizeEvent(event)
 
     def wheelEvent(self, event):
@@ -1266,10 +1266,10 @@ class WaterfallWidget(QtWidgets.QWidget):
             # pozycja kursora (x w pikselach)
             mouse_x = event.x()
 
-            # częstotliwość pod kursorem PRZED zoomem
+            # frequency under cursor BEFORE zoom
             freq_before = self._x_to_freq(mouse_x)
 
-            # modyfikacja zoomu
+            # modify zoom
             if delta > 0:
                 self.zoom_factor *= 0.8
             else:
@@ -1278,14 +1278,14 @@ class WaterfallWidget(QtWidgets.QWidget):
             # ograniczenia zoomu
             self.zoom_factor = max(0.05, min(1.0, self.zoom_factor))
 
-            # częstotliwość pod kursorem PO zoomie
+            # frequency under cursor AFTER zoom
             freq_after = self._x_to_freq(mouse_x)
 
-            # zmiana środka widoku, aby utrzymać tę samą częstotliwość pod kursorem
+            # change center view position to keep same frequency under cursor
             if hasattr(self, "samp_rate") and self.samp_rate > 0:
                 full_start = self.center_freq - (self.samp_rate / 2.0)
                 full_bw = self.samp_rate
-                # różnica między freq_before i freq_after w jednostkach [0..1]
+                # difference between freq_before and freq_after in units [0..1]
                 delta_norm = (freq_before - freq_after) / full_bw
                 self.center_pos = np.clip(self.center_pos + delta_norm, 0.0, 1.0)
 
@@ -1293,7 +1293,7 @@ class WaterfallWidget(QtWidgets.QWidget):
             event.accept()
 
         else:
-            # przewijanie bez Ctrl — zmiana częstotliwości
+            # scrolling without Ctrl - frequency change
             if delta > 0:
                 delta = 1
             elif delta < 0:
@@ -1316,14 +1316,14 @@ class WaterfallWidget(QtWidgets.QWidget):
             self._press_y = event.y()
 
     def mouseMoveEvent(self, event):
-        # hover — zawsze aktualizujemy częstotliwość i odświeżamy natychmiast
+        # hover - always update frequency and refresh immediately
         freq = int(self._x_to_freq(event.x()))
         if freq != self.hover_freq:
             self.hover_freq = freq
             self.freq_hover.emit(freq)
             self.update()
 
-        # jeśli przeciągamy - zachowaj obecne panning
+        # if dragging - keep current panning
         if self._dragging:
             dx = event.x() - self._last_x
             self._last_x = event.x()
@@ -1332,12 +1332,12 @@ class WaterfallWidget(QtWidgets.QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event):
-        # jeśli był to krótki klik (prawie bez ruchu) - traktujemy jako wybór częstotliwości
+        # if it was a short click (almost no movement) - treat as frequency selection
         self._dragging = False
         if self._press_x is not None:
             dx = abs(event.x() - self._press_x)
             dy = abs(event.y() - self._press_y)
-            if dx < 4 and dy < 4:  # threshold dla kliknięcia
+            if dx < 4 and dy < 4:  # threshold for click
                 freq = int(self._x_to_freq(event.x()))
                 self.selected_freq = freq
                 self.freq_clicked.emit(freq)
@@ -1346,15 +1346,15 @@ class WaterfallWidget(QtWidgets.QWidget):
         self._press_y = None
 
     def _visible_freq_range(self):
-        """Zwraca (visible_start_freq, visible_end_freq) na podstawie samp_rate, center_freq, zoom_factor i center_pos."""
+        """Returns (visible_start_freq, visible_end_freq) based on samp_rate, center_freq, zoom_factor and center_pos."""
         full_start = self.center_freq - (self.samp_rate / 2.0)
         full_bw = self.samp_rate
         vis_bw = full_bw * self.zoom_factor
-        # center_pos określa pozycję środka widoku względem pełnego pasma [0..1]
+        # center_pos specifies center view position relative to full band [0..1]
         center_abs = full_start + self.center_pos * full_bw
         vis_start = center_abs - vis_bw / 2.0
         vis_end = vis_start + vis_bw
-        # zabezpieczenie granic: trzymamy w obrębie pełnego pasma
+        # boundary protection: keep within full band
         if vis_start < full_start:
             vis_start = full_start
             vis_end = vis_start + vis_bw
@@ -1365,7 +1365,7 @@ class WaterfallWidget(QtWidgets.QWidget):
 
     @QtCore.pyqtSlot(np.ndarray)
     def push_row(self, fft_row):
-        # zoom: wybieramy wycinek
+        # zoom: select slice
         n = len(fft_row)
         self.fft_avg = sum(fft_row) / n
         visible_n = max(2, int(n * self.zoom_factor))
@@ -1376,7 +1376,7 @@ class WaterfallWidget(QtWidgets.QWidget):
             start = max(0, end - visible_n)
         fft_visible = fft_row[start:end]
 
-        # skaluj do szerokości widgetu
+        # scale to widget width
         if fft_visible.size != self.width_px:
             fft_visible = np.interp(np.linspace(0, len(fft_visible) - 1, self.width_px),
                                     np.arange(len(fft_visible)),
@@ -1385,24 +1385,24 @@ class WaterfallWidget(QtWidgets.QWidget):
         rgb_row = draw_line(fft_visible, self.palette, self.min_db, self.max_db)
 
         with self._lock:
-            # operuj na naszym bezpiecznym bufferze numpy
+            # operate on our safe numpy buffer
             self._buffer[1+WATERFALL_MARGIN:] = self._buffer[WATERFALL_MARGIN:-1]
             self._buffer[WATERFALL_MARGIN] = rgb_row
 
-            # skopiuj do QImage (uwzględnia bytesPerLine)
+            # copy to QImage (includes bytesPerLine)
             ptr = self._image.bits()
             ptr.setsize(self._image.byteCount())
             bytes_per_line = self._image.bytesPerLine()
             arr2d = np.frombuffer(ptr, dtype=np.uint8).reshape((self.height_px, bytes_per_line))
-            # skopiuj tylko treść RGB (bez paddingu)
+            # copy only RGB content (without padding)
             rgb_view = arr2d[:, :self.width_px * 3].reshape((self.height_px, self.width_px, 3))
             rgb_view[:, :] = self._buffer[:, :]
 
-        # poproś o ponowne narysowanie
+        # request redraw
         self.update()
 
     def _format_freq(self, hz):
-        #  formatowanie częstotliwości  -> Hz, kHz, MHz
+        # frequency formatting -> Hz, kHz, MHz
         if abs(hz) >= 1e6:
             return f"{hz/1e6:.2f} MHz"
         if abs(hz) >= 1e3:
@@ -1411,11 +1411,11 @@ class WaterfallWidget(QtWidgets.QWidget):
 
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
-        # narysuj obraz
+        # draw image
         with self._lock:
             painter.drawImage(self.rect(), self._image, self._image.rect())
 
-            # --- rysowanie skali częstotliwości (napisy co 0.1 MHz + ticki pośrednie)
+            # --- drawing frequency scale (labels every 0.1 MHz + intermediate ticks)
             vis_start, vis_end = self._visible_freq_range()
             bw = vis_end - vis_start
 
@@ -1425,7 +1425,7 @@ class WaterfallWidget(QtWidgets.QWidget):
             painter.setFont(font)
             metrics = painter.fontMetrics()
 
-            # główne ticki co 0.1 MHz
+            # major ticks every 0.1 MHz
             start_mhz = vis_start / 1e6
             end_mhz = vis_end / 1e6
             start_tick = np.floor(start_mhz * 10) / 10
@@ -1436,14 +1436,14 @@ class WaterfallWidget(QtWidgets.QWidget):
                 freq_hz = tick * 1e6
                 if vis_start <= freq_hz <= vis_end:
                     x = int((freq_hz - vis_start) / bw * (self.width_px - 1))
-                    # główny tick + napis
+                    # major tick + label
                     painter.drawLine(x, WATERFALL_MARGIN - MAJOR_THICK_HEIGHT, x, WATERFALL_MARGIN)
                     text = f"{tick:.2f}"
                     tw = metrics.horizontalAdvance(text)
                     tx = max(2, x - tw // 2)
                     painter.drawText(tx, 16, text)
 
-                    # ticki pośrednie
+                    # intermediate ticks
                     if MINOR_TICKS_PER_MAJOR > 0:
                         step = 0.1 / MINOR_TICKS_PER_MAJOR
                         for i in range(1, MINOR_TICKS_PER_MAJOR):
@@ -1456,7 +1456,7 @@ class WaterfallWidget(QtWidgets.QWidget):
                 tick += 0.05
 
 
-            # narysuj ramkę i aktualne wartości min/max dB w rogu
+            # draw frame and current min/max dB values in corner
             overlay_y = self.height_px - 92
             painter.setPen(QtGui.QPen(QtGui.QColor(180,180,180), 1))
             # painter.drawRect(0, 0, self.width_px-1, self.height_px-1)
@@ -1468,41 +1468,41 @@ class WaterfallWidget(QtWidgets.QWidget):
             painter.drawText(8, overlay_y + 54, f"Max dB: {self.max_db:.0f}")
             painter.drawText(8, overlay_y + 54 + 16, f"{self.hover_freq/1000000:.3f}")
 
-            # --- rysowanie zielonych pasów dla pasm amatorskich
+            # --- drawing green bands for amateur bands
             for name, f_start, f_end in HAM_BANDS:
-                # jeśli pasmo w ogóle widoczne na aktualnym zakresie
+                # if band is visible at all in current range
                 if f_end < vis_start or f_start > vis_end:
                     continue
 
-                # oblicz widoczny fragment
+                # calculate visible fragment
                 start_clamped = max(f_start, vis_start)
                 end_clamped = min(f_end, vis_end)
 
-                # przelicz na piksele
+                # convert to pixels
                 x1 = int((start_clamped - vis_start) / bw * (self.width_px - 1))
                 x2 = int((end_clamped - vis_start) / bw * (self.width_px - 1))
 
-                # szerokość (min. 2px żeby było widać nawet przy zoomie)
+                # width (min 2px to be visible even when zoomed)
                 w = max(2, x2 - x1)
 
-                # półprzezroczysty zielony pasek
+                # semi-transparent green band
                 painter.fillRect(x1, WATERFALL_MARGIN - 10, w, 10, QtGui.QColor(0, 200, 0, 90))
 
-                # etykieta pasma (jeśli się mieści)
+                # band label (if it fits)
                 text = name
                 tw = metrics.horizontalAdvance(text)
                 if w > tw + 4:
                     painter.setPen(QtGui.QPen(QtGui.QColor(150, 255, 150), 1))
                     painter.drawText(x1 + (w - tw) // 2, WATERFALL_MARGIN - 2, text)
 
-            # --- rysowanie pionowych linii: selected (żółta) i hover (cyjan)
-            # mapowanie freq -> x
+            # --- drawing vertical lines: selected (yellow) and hover (cyan)
+            # freq -> x mapping
             vis_start, vis_end = self._visible_freq_range()
             bw = max(1e-9, (vis_end - vis_start))
             if self.selected_freq is not None:
                 if vis_start <= self.selected_freq <= vis_end:
                     x_sel = int((self.selected_freq - vis_start) / bw * (self.width_px - 1))
-                    pen_sel = QtGui.QPen(QtGui.QColor(255, 255, 0, 220), 2)  # żółta
+                    pen_sel = QtGui.QPen(QtGui.QColor(255, 255, 0, 220), 2)  # yellow
                     painter.setPen(pen_sel)
                     painter.drawLine(x_sel, 0, x_sel, self.height_px)
                     # filter width
@@ -1525,7 +1525,7 @@ class WaterfallWidget(QtWidgets.QWidget):
             if self.hover_freq is not None:
                 if vis_start <= self.hover_freq <= vis_end:
                     x_h = int((self.hover_freq - vis_start) / bw * (self.width_px - 1))
-                    pen_h = QtGui.QPen(QtGui.QColor(150, 255, 150, 255), 2)   # cyjan
+                    pen_h = QtGui.QPen(QtGui.QColor(150, 255, 150, 255), 2)   # cyan
                     painter.setPen(pen_h)
                     painter.drawLine(x_h, 0, x_h, self.height_px)
                     painter.drawText(x_h, self.height_px - 16, f"{self.hover_freq/1000000:.4f}")
@@ -1578,7 +1578,7 @@ class WsReceiver(threading.Thread, QtCore.QObject):
                     json_msg = json.loads(message)
                 except Exception:
                     return
-                # jeśli to wiadomość config -> wyemituj
+                # if this is a config message -> emit
                 if 'type' in json_msg and 'config' in json_msg['type']:
                     val = json_msg.get('value', {})
                     cfg = {}
@@ -1594,7 +1594,7 @@ class WsReceiver(threading.Thread, QtCore.QObject):
                         # print(self.center_freq)
                         cfg['center_freq'] = self.center_freq
                     if cfg:
-                        # emitujemy konfigurację do UI
+                        # emit configuration to UI
                         self.config_signal.emit(cfg)
                 return
 
@@ -1604,7 +1604,7 @@ class WsReceiver(threading.Thread, QtCore.QObject):
             frame_type = data[0]
             if frame_type == 1:
                 # if len(payload) == self.fft_size:
-                    # dekodowanie (przyjmujemy waterfall_i16 -> dB style)
+                    # decoding (assume waterfall_i16 -> dB style)
                 self.fft_codec.reset()
                 waterfall_i16 = self.fft_codec.decode(data)
                 waterfall_f32 = []
@@ -1674,7 +1674,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tx_sent = 0
 
         self.filter_width = FILTER_WIDTH_USB_NORMAL
-        self.current_freq = 14074000  # Hz (odczyt z rigctld)
+        self.current_freq = 14074000  # Hz (read from rigctld)
         self.vfoa_freq = self.current_freq
         self.vfob_freq = self.current_freq
         self.vfoa_mode = 'USB'
@@ -1696,7 +1696,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.active_vfo = 0
 
         # Radio mode
-        self.mode_labels = {}   # tu trzymamy QLabel’e dla łatwego dostępu
+        self.mode_labels = {}
         self.modes_layout = QtWidgets.QVBoxLayout()
         self.modes_layout.addSpacing(8)
         for mode in radioModes:
@@ -1704,11 +1704,11 @@ class MainWindow(QtWidgets.QMainWindow):
             label.setAlignment(QtCore.Qt.AlignCenter)
             label.setFont(QtGui.QFont("Monospace", 8))
             label.setFixedHeight(16)
-            self.modes_layout.setSpacing(0)        # odstęp między elementami
-            self.modes_layout.setContentsMargins(0, 0, 0, 0)   # marginesy layoutu
-            # zapamiętujemy do słownika
+            self.modes_layout.setSpacing(0)        # spacing between elements
+            self.modes_layout.setContentsMargins(0, 0, 0, 0)   # layout margins
+            # save to dictionary
             self.mode_labels[mode] = label
-            # dodajemy do layoutu
+            # add to layout
             self.modes_layout.addWidget(label)
         self.modes_layout.addSpacing(8)
 
@@ -1734,27 +1734,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tx_power_btn.setText("-W")
         self.tx_power_btn.clicked.connect(self.set_tx_power)
 
-        # główna częstotliwość
+        # main frequency
         self.freq_display = ClickableLabel("--- MHz")
         self.freq_display.setFont(ACTIVE_VFO_FONT)
         self.freq_display.setAlignment(QtCore.Qt.AlignCenter)
         self.freq_display.clicked.connect(self.open_frequency_dialog)
         self.set_frequency_label(self.freq_display, 0)
 
-        # druga, mniejsza częstotliwość
+        # second, smaller frequency
         self.freq_display_sub = ClickableLabel("--- kHz")
         self.freq_display_sub.setFont(SECOND_VFO_FONT)
         self.freq_display_sub.setAlignment(QtCore.Qt.AlignCenter)
         self.freq_display_sub.clicked.connect(self.open_frequency_dialog)
 
-        # pionowy układ dla obu częstotliwości
+        # vertical layout for both frequencies
         freq_layout = QtWidgets.QVBoxLayout()
         freq_layout.addWidget(QtWidgets.QLabel('VFOA:'))
         freq_layout.addWidget(self.freq_display)
         freq_layout.addWidget(QtWidgets.QLabel('VFOB:'))
         freq_layout.addWidget(self.freq_display_sub)
 
-        # żeby się ładnie trzymały razem w środku
+        # to keep them nicely together in center
         freq_widget = QtWidgets.QWidget()
         freq_widget.setLayout(freq_layout)
         freq_widget.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; border-radius: 8px;")
@@ -1766,12 +1766,12 @@ class MainWindow(QtWidgets.QMainWindow):
         right_grid.setContentsMargins(0, 0, 0, 0)
         right_container.setLayout(right_grid)
 
-        # pierwsza (istniejąca) linia przycisków
+        # first (existing) button line
         right_grid.addWidget(self.att_btn,       0, 0)
         right_grid.addWidget(self.ipo_btn,       0, 1)
         right_grid.addWidget(self.tx_power_btn,  0, 2)
 
-        # druga linia — na razie tylko NB pod pierwszym przyciskiem
+        # second line - for now only NB under first button
         self.nb_btn = QtWidgets.QPushButton("NB")
         self.nb_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.nb_btn.setStyleSheet("background-color: " + NOT_ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
@@ -1814,15 +1814,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         right_grid.addWidget(self.miceq_btn, 2, 1)
 
-        # --- GRUPA Z PRZYCISKAMI FREQ CTRL ---
+        # --- GROUP WITH FREQ CTRL BUTTONS ---
         self.group_freq_ctrl = QtWidgets.QGroupBox("Freq Ctrl")
         self.group_freq_ctrl.setObjectName("groupFreqCtrl")
 
-        # jeśli chcesz, żeby ramka miała stały rozmiar (opcjonalne)
+        # if you want the frame to have fixed size (optional)
         # self.group_freq_ctrl.setFixedSize(80, 80)
         # self.group_freq_ctrl.setContentsMargins(12,0,12,0)
 
-        # przyciski (jak masz już zdefiniowane, po prostu użyj tych obiektów)
+        # buttons (as you already have defined, just use these objects)
         self.btn_freq_plus_slow = QtWidgets.QPushButton("+")
         self.btn_freq_plus_fast = QtWidgets.QPushButton("+\n+")
         self.btn_freq_minus_slow = QtWidgets.QPushButton("-")
@@ -1831,7 +1831,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.radio_fast_freq = QtWidgets.QCheckBox("Fast Scroll")
         self.radio_fast_freq.clicked.connect(self.radio_fast_freq_clicked)
 
-        # ustaw rozmiary i politykę rozciągania (ważne)
+        # set sizes and stretch policy (important)
         for btn in [self.btn_freq_plus_slow, self.btn_freq_plus_fast,
                     self.btn_freq_minus_slow, self.btn_freq_minus_fast]:
             btn.setFixedSize(32, 32)
@@ -1842,16 +1842,16 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             btn.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
 
-        # podłączenia
+        # connections
         self.btn_freq_plus_slow.clicked.connect(lambda: self.frequency_step(+1, FREQ_STEP_SLOW))
         self.btn_freq_plus_fast.clicked.connect(lambda: self.frequency_step(+1, FREQ_STEP_FAST))
         self.btn_freq_minus_slow.clicked.connect(lambda: self.frequency_step(-1, FREQ_STEP_SLOW))
         self.btn_freq_minus_fast.clicked.connect(lambda: self.frequency_step(-1, FREQ_STEP_FAST))
 
-        # siatka 2x2 dla przycisków
+        # 2x2 grid for buttons
         freq_grid = QtWidgets.QGridLayout()
-        freq_grid.setVerticalSpacing(8)    # pionowy odstęp między wierszami (zbliż je)
-        freq_grid.setHorizontalSpacing(8)  # odstęp między kolumnami
+        freq_grid.setVerticalSpacing(8)    # vertical spacing between rows (bring them closer)
+        freq_grid.setHorizontalSpacing(8)  # spacing between columns
         freq_grid.setContentsMargins(0, 0, 0, 0)
 
         freq_grid.addWidget(self.btn_freq_plus_slow, 0, 0, QtCore.Qt.AlignCenter)
@@ -1859,19 +1859,19 @@ class MainWindow(QtWidgets.QMainWindow):
         freq_grid.addWidget(self.btn_freq_minus_slow, 1, 0, QtCore.Qt.AlignCenter)
         freq_grid.addWidget(self.btn_freq_minus_fast, 1, 1, QtCore.Qt.AlignCenter)
 
-        # główny layout grupy: użyj stretchów żeby wycentrować grid pionowo
+        # main group layout: use stretches to center grid vertically
         group_layout = QtWidgets.QVBoxLayout()
         # group_layout.setContentsMargins(4, 20, 4, 8)
         group_layout.setSpacing(0)
-        group_layout.addStretch(1)                  # zajmuje miejsce nad siatką
-        group_layout.addLayout(freq_grid)          # siatka przycisków -> będzie wyśrodkowana
-        group_layout.addSpacing(8)                  # zajmuje miejsce pod siatką
+        group_layout.addStretch(1)                  # takes space above grid
+        group_layout.addLayout(freq_grid)          # button grid -> will be centered
+        group_layout.addSpacing(8)                  # takes space below grid
         group_layout.addWidget(self.radio_fast_freq)
-        group_layout.addStretch(1)                  # zajmuje miejsce pod siatką
+        group_layout.addStretch(1)                  # takes space below grid
 
         self.group_freq_ctrl.setLayout(group_layout)
 
-        # dodaj grupę do głównego layoutu (tam gdzie chcesz)
+        # add group to main layout (where you want)
         # main_layout.addWidget(self.group_freq_ctrl)
 
         self.last_squelch_pos = 0
@@ -1909,14 +1909,14 @@ class MainWindow(QtWidgets.QMainWindow):
         knobs_row.addWidget(self.squelch_group)
         knobs_row.addWidget(self.volume_group)
 
-        # ---- bottom buttons: teraz w 2 rzędach
+        # ---- bottom buttons: now in 2 rows
         btns_layout = QtWidgets.QVBoxLayout()
         self.buttons = []
 
-        # pierwszy rząd
+        # first row
         btn_row1 = QtWidgets.QHBoxLayout()
 
-        # drugi rząd
+        # second row
         btn_row2 = QtWidgets.QHBoxLayout()
 
         self.power_btn = QtWidgets.QPushButton("PWR")
@@ -2034,7 +2034,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.swr_meter.setFont(METERS_FONT)
         self.swr_meter.setValue(0)
         self.swr_meter.setFormat(f"SWR: {'-':>5}")
-        self.swr_meter.hide()  # Ukryj na start, zamieni się z S-METER podczas TX
+        self.swr_meter.hide()  # Hide on start, will swap with S-METER during TX
 
         # Filter width
         self.filter_width_group = QtWidgets.QGroupBox("Filter")
@@ -2062,7 +2062,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- GroupBox: Antenna ---
         antenna_group = QtWidgets.QGroupBox("Antenna")
 
-        # Układ pionowy wewnątrz ramki
+        # Vertical layout inside frame
         antenna_layout = QtWidgets.QVBoxLayout(antenna_group)
 
         # Radio buttons
@@ -2070,23 +2070,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.antenna_2 = QtWidgets.QRadioButton(ANTENNA_2_NAME)
         self.antenna_3 = QtWidgets.QRadioButton(ANTENNA_3_NAME)
 
-        # Domyślne zaznaczenie
+        # Default selection
         # self.antenna_1.setChecked(True)
         if ANTENNA_SWITCH_ENABLED:
             self.get_current_antenna()
 
-        # Dodajemy przyciski do layoutu pionowego
+        # Add buttons to vertical layout
         antenna_layout.addWidget(self.antenna_1)
         antenna_layout.addWidget(self.antenna_2)
         antenna_layout.addWidget(self.antenna_3)
 
-        # Grupa przycisków (jednokrotny wybór)
+        # Button group (single choice)
         self.antenna_switch_group = QtWidgets.QButtonGroup(self)
         self.antenna_switch_group.addButton(self.antenna_1)
         self.antenna_switch_group.addButton(self.antenna_2)
         self.antenna_switch_group.addButton(self.antenna_3)
 
-        # Po zmianie wyboru wywołaj funkcję
+        # Call function after selection change
         self.antenna_switch_group.buttonClicked.connect(self.antenna_switch_changed)
 
         bottom_row = QtWidgets.QHBoxLayout()
@@ -2097,10 +2097,10 @@ class MainWindow(QtWidgets.QMainWindow):
             bottom_row.addWidget(antenna_group)
         bottom_row.addStretch()
 
-        # --- Layout poziomy dla trzech pionowych suwaków
+        # --- Horizontal layout for three vertical sliders
         dsp_layout = QtWidgets.QHBoxLayout()
 
-        # --- Shift slider (pionowy)
+        # --- Shift slider (vertical)
         self.shift_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
         self.shift_slider.setFixedHeight(DSP_SLIDER_HEIGHT)
         self.shift_slider.setMinimum(-1000)
@@ -2116,7 +2116,7 @@ class MainWindow(QtWidgets.QMainWindow):
         shift_layout = QtWidgets.QVBoxLayout(shift_group)
         shift_layout.addWidget(self.shift_slider)
 
-        # --- Notch slider (pionowy)
+        # --- Notch slider (vertical)
         self.notch_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
         self.notch_slider.setFixedHeight(DSP_SLIDER_HEIGHT)
         self.notch_slider.setMinimum(0)
@@ -2135,7 +2135,7 @@ class MainWindow(QtWidgets.QMainWindow):
         notch_layout = QtWidgets.QVBoxLayout(self.notch_group)
         notch_layout.addWidget(self.notch_slider)
 
-        # --- Noise Reduction slider (pionowy)
+        # --- Noise Reduction slider (vertical)
         self.nr_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Vertical)
         self.nr_slider.setFixedHeight(DSP_SLIDER_HEIGHT)
         self.nr_slider.setMinimum(1)
@@ -2154,12 +2154,12 @@ class MainWindow(QtWidgets.QMainWindow):
         nr_layout = QtWidgets.QVBoxLayout(self.nr_group)
         nr_layout.addWidget(self.nr_slider)
 
-        # --- dodaj wszystkie podgrupy do poziomego układu
+        # --- add all subgroups to horizontal layout
         dsp_layout.addWidget(shift_group)
         dsp_layout.addWidget(self.notch_group)
         dsp_layout.addWidget(self.nr_group)
 
-        # przycisk odtwarzania
+        # playback button
         self.play1_btn = QtWidgets.QPushButton('▶️ ' + REC1_PATH.split('/')[-1].replace('.wav', '')[0:5])
         self.play1_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
         self.play1_btn.setStyleSheet("background-color: " + ACTIVE_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
@@ -2178,7 +2178,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.waterfall_widget = WaterfallWidget(width=int(self.width()), height=int(self.height()))
 
-        # --- dodanie do bottom_row_2
+        # --- adding to bottom_row_2
         bottom_row_2 = QtWidgets.QHBoxLayout()
         bottom_row_2.addLayout(dsp_layout)
 
@@ -2204,7 +2204,7 @@ class MainWindow(QtWidgets.QMainWindow):
             top_row.addWidget(self.player_group)
         top_row.addStretch()
         
-        # Settings button - ostatni w top_row
+        # Settings button - last in top_row
         self.settings_btn = QtWidgets.QPushButton("Settings")
         self.settings_btn.setFixedSize(SMALL_BTN_WIDTH + 10, SMALL_BTN_HEIGHT)
         self.settings_btn.setStyleSheet("background-color: " + "#d0d0d0" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
@@ -2219,9 +2219,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.smeter_row.addSpacing(20)
         self.smeter_row.addWidget(self.po_meter)
         
-        # ALC i POWER zawsze widoczne, SWR ukryty (pojawi się zamiast S-METER podczas TX)
+        # ALC and POWER always visible, SWR hidden (will appear instead of S-METER during TX)
 
-        # --- sterowanie ---
+        # --- controls ---
         controls = QtWidgets.QHBoxLayout()
 
         controls.addWidget(QtWidgets.QLabel("Min[dB]:"))
@@ -2268,7 +2268,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status = self.statusBar()
         self.status.setVisible(False)
 
-        # Wątek odczytu
+        # Read thread
         self.thread = QtCore.QThread()
         self.worker = PollWorker(HOST, PORT, POLL_MS)
         self.worker.moveToThread(self.thread)
@@ -2280,7 +2280,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resume_polling.connect(self.worker.resume)
         self.thread.start()
 
-        # Obsługa wysyłania zmian do radia
+        # Handling sending changes to radio
         self.power_btn.clicked.connect(self.power_btn_clicked)
         self.tuner_status.singleClicked.connect(self.set_tuner)
         self.tuner_status.doubleClicked.connect(self.tuning_start)
@@ -2340,14 +2340,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         db = int(val)
 
-        # --- liniowe wypełnienie paska 0..100 dla -60..+60 dB ---
+        # --- linear bar fill 0..100 for -60..+60 dB ---
         pct = int((db + 60) / 120 * 100)
         pct = max(0, min(100, pct))
 
-        # --- etykiety S ---
+        # --- S labels ---
         # S0 = -60 dB
         # S9 = 0 dB
-        # powyżej 0 dB: +10, +20 ... do +60
+        # above 0 dB: +10, +20 ... to +60
         if db < 0:
             # Mapowanie -60..0 dB → S0..S9
             s = int((db + 60) / 60 * 9)   # liniowo
@@ -2532,13 +2532,13 @@ class MainWindow(QtWidgets.QMainWindow):
             print(f"No parser available for raw({param})")
             return
 
-        # pobierz funkcję metody z self
+        # get method function from self
         parser_fn = getattr(self, parser_name, None)
         if parser_fn is None:
             print(f"Parser function {parser_name} not found!")
             return
 
-        # wywołaj dedykowany parser
+        # call dedicated parser
         parser_fn(param_value)
 
     def find_parser_for_raw(self, param):
@@ -2568,13 +2568,13 @@ class MainWindow(QtWidgets.QMainWindow):
             print(f"No parser available for get_level({param})")
             return
 
-        # pobierz funkcję metody z self
+        # get method function from self
         parser_fn = getattr(self, parser_name, None)
         if parser_fn is None:
             print(f"Parser function {parser_name} not found!")
             return
 
-        # wywołaj dedykowany parser
+        # call dedicated parser
         parser_fn(param_value)
 
     def parse_get_func(self, val):
@@ -2586,13 +2586,13 @@ class MainWindow(QtWidgets.QMainWindow):
             print(f"No parser available for get_func({param})")
             return
 
-        # pobierz funkcję metody z self
+        # get method function from self
         parser_fn = getattr(self, parser_name, None)
         if parser_fn is None:
             print(f"Parser function {parser_name} not found!")
             return
 
-        # wywołaj dedykowany parser
+        # call dedicated parser
         # print(param + '=' + param_value)
         parser_fn(param_value)
 
@@ -2856,10 +2856,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def s_meter_label(self, val: int) -> str:
         """
-        Mapowanie wartości RM0 (0–255) na skalę S-metra.
-        Używa tabeli kalibracyjnej z interpolacją liniową.
+        Mapping raw RM0 value (0-255) to S-meter scale.
+        Uses calibration table with linear interpolation.
         """
-        # tabela: surowa_wartość : etykieta
+        # table: raw_value : label
         cal_table = [
             (0, "S0"),
             (20, "S1"),
@@ -2875,18 +2875,18 @@ class MainWindow(QtWidgets.QMainWindow):
             (255, "+60"),
         ]
 
-        # jeśli dokładne trafienie
+        # if exact match
         for raw, label in cal_table:
             if val == raw:
                 return label
 
-        # interpolacja: znajdź przedział
+        # interpolation: find interval
         for i in range(len(cal_table)-1):
             raw1, lab1 = cal_table[i]
             raw2, lab2 = cal_table[i+1]
             if raw1 <= val <= raw2:
-                return lab1  # dla uproszczenia zwracamy niższy próg
-                # można też dorobić interpolację np. "S6"
+                return lab1  # for simplicity return lower threshold
+                # could also add interpolation e.g. "S6"
         return "S?"
 
     def swr_label(self, val: int) -> str:
@@ -3138,13 +3138,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.client.send(cmd)
 
     def replace_s_meter_when_tx(self, tx_state):
-        """Przełącza między S-METER (RX) a SWR (TX). ALC i POWER zawsze widoczne."""
+        """Switches between S-METER (RX) and SWR (TX). ALC and POWER always visible."""
         if tx_state:
-            # TX - zamień S-METER na SWR
+            # TX - replace S-METER with SWR
             self.s_meter.hide()
             self.swr_meter.show()
         else:
-            # RX - zamień SWR na S-METER
+            # RX - replace SWR with S-METER
             self.s_meter.show()
             self.swr_meter.hide()
 
@@ -3214,14 +3214,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.frequency_change(new_freq)
 
     def open_settings(self):
-        """Otwiera dialog ustawień"""
+        """Opens settings dialog"""
         global config
         dlg = SettingsDialog(self, config)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            # Zaktualizuj globalną instancję config jeśli zmieniono plik
+            # Update global config instance if file was changed
             config = dlg.config
             
-            # Po zapisaniu ustawień, zaktualizuj elementy UI które można zmienić bez restartu
+            # After saving settings, update UI elements that can be changed without restart
             self.update_from_config()
             
             QtWidgets.QMessageBox.information(
@@ -3231,12 +3231,12 @@ class MainWindow(QtWidgets.QMainWindow):
             )
     
     def update_from_config(self):
-        """Aktualizuje elementy UI z aktualnej konfiguracji (bez restartu)"""
+        """Updates UI elements from current configuration (without restart)"""
         global HOST, PORT, POLL_MS, FREQ_STEP_SLOW, FREQ_STEP_FAST, TX_OFF_DELAY, PTT_KEY
         global ANTENNA_1_NAME, ANTENNA_2_NAME, ANTENNA_3_NAME
         global MOUSE_WHEEL_FREQ_STEP, MOUSE_WHEEL_FAST_FREQ_STEP, DEFAULT_NOISE_REDUCTION
         
-        # Zaktualizuj globalne zmienne
+        # Update global variables
         HOST = config.get('host')
         PORT = config.get('port')
         POLL_MS = config.get('poll_ms')
@@ -3265,7 +3265,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         else:
             self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowStaysOnTopHint)
-        self.show()  # Trzeba pokazać okno ponownie po zmianie flag
+        self.show()  # Need to show window again after changing flags
 
 
 
@@ -3338,7 +3338,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.send_tx_signal.emit(1)
             widget.setStyleSheet("background-color: " + BUTTON_COLOR + "; text-align: center; border-radius: 4px; border: 1px solid black;")
         
-            # callback wykona się po zakończeniu odtwarzania
+            # callback will execute after playback finishes
             def on_finished():
                 self.sound_finished.emit(widget)
 
@@ -3404,12 +3404,12 @@ def start_keyboard_listener(main_window):
             pressed_keys.add(key_name)
             # print("Pressed:", pressed_keys)
 
-            # TX (np. Alt)
+            # TX (e.g. Alt)
             if PTT_KEY in pressed_keys and not tx_pressed:
                 tx_pressed = True
                 main_window.send_tx_signal.emit(1)
 
-            # FST combo (np. Shift + Q)
+            # FST combo (e.g. Shift + Q)
             if FST_KEY_MOD in pressed_keys and FST_KEY in pressed_keys and not fst_pressed:
                 fst_pressed = True
                 main_window.send_fst_signal.emit(1)
