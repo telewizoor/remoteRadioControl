@@ -21,8 +21,15 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 class Config:
     """Klasa zarządzająca konfiguracją aplikacji"""
     
+    LAST_CONFIG_FILE = 'last_config.txt'
+    
     def __init__(self, config_file='config.json'):
-        self.config_file = os.path.join(dir_path, config_file)
+        # Jeśli config_file jest pełną ścieżką, użyj jej bezpośrednio
+        if os.path.isabs(config_file):
+            self.config_file = config_file
+        else:
+            # W przeciwnym razie użyj dir_path
+            self.config_file = os.path.join(dir_path, config_file)
         self.defaults = self._get_defaults()
         self.settings = self.defaults.copy()
         self.load()
@@ -121,9 +128,36 @@ class Config:
     def reset_to_defaults(self):
         """Resetuje ustawienia do wartości domyślnych"""
         self.settings = self.defaults.copy()
+    
+    def save_last_config_name(self):
+        """Zapisuje nazwę aktualnego pliku konfiguracji jako ostatnio używany"""
+        try:
+            last_config_path = os.path.join(dir_path, self.LAST_CONFIG_FILE)
+            with open(last_config_path, 'w') as f:
+                f.write(self.config_file)
+            return True
+        except Exception as e:
+            print(f"Error saving last config name: {e}")
+            return False
+    
+    @staticmethod
+    def get_last_config_name():
+        """Odczytuje nazwę ostatnio używanego pliku konfiguracji"""
+        try:
+            last_config_path = os.path.join(dir_path, Config.LAST_CONFIG_FILE)
+            if os.path.exists(last_config_path):
+                with open(last_config_path, 'r') as f:
+                    config_file = f.read().strip()
+                    if os.path.exists(config_file):
+                        return config_file
+        except Exception as e:
+            print(f"Error reading last config name: {e}")
+        # Jeśli nie udało się odczytać, zwróć domyślny plik
+        return os.path.join(dir_path, 'config.json')
 
 # Globalna instancja konfiguracji
-config = Config()
+last_config_file = Config.get_last_config_name()
+config = Config(last_config_file)
 
 ### --- Configuration (Legacy - for backward compatibility) --- ###
 # Connection
@@ -494,6 +528,21 @@ class SettingsDialog(QtWidgets.QDialog):
         tab_connection = QtWidgets.QWidget()
         layout_conn = QtWidgets.QFormLayout()
         
+        # Config file selection
+        config_file_layout = QtWidgets.QHBoxLayout()
+        self.config_file_label = QtWidgets.QLabel(os.path.basename(self.config.config_file))
+        self.config_file_label.setStyleSheet("color: gray; font-style: italic;")
+        btn_select_config = QtWidgets.QPushButton("Select...")
+        btn_select_config.clicked.connect(self.select_config_file)
+        btn_save_as_config = QtWidgets.QPushButton("Save As...")
+        btn_save_as_config.clicked.connect(self.save_config_as)
+        config_file_layout.addWidget(self.config_file_label)
+        config_file_layout.addWidget(btn_select_config)
+        config_file_layout.addWidget(btn_save_as_config)
+        layout_conn.addRow("Config File:", config_file_layout)
+        
+        layout_conn.addRow("", QtWidgets.QLabel(""))  # Separator
+        
         self.edit_host = QtWidgets.QLineEdit(str(self.temp_settings['host']))
         self.edit_port = QtWidgets.QSpinBox()
         self.edit_port.setRange(1, 65535)
@@ -690,6 +739,107 @@ class SettingsDialog(QtWidgets.QDialog):
     
     def save_settings(self):
         """Zapisuje ustawienia do temp_settings i zamyka dialog"""
+        # Zaktualizuj temp_settings z pól
+        self.update_temp_settings_from_fields()
+        
+        # Aktualizuj główną konfigurację
+        self.config.settings = self.temp_settings.copy()
+        
+        # Zapisz do pliku
+        if self.config.save():
+            # Zapisz nazwę tego pliku jako ostatnio używany
+            self.config.save_last_config_name()
+            self.accept()
+        else:
+            QtWidgets.QMessageBox.warning(
+                self, 
+                "Error", 
+                "Failed to save settings to file."
+            )
+    
+    def reset_to_defaults(self):
+        """Resetuje wszystkie ustawienia do wartości domyślnych"""
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Reset to Defaults",
+            "Are you sure you want to reset all settings to default values?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No
+        )
+        
+        if reply == QtWidgets.QMessageBox.Yes:
+            self.config.reset_to_defaults()
+            self.temp_settings = self.config.settings.copy()
+            # Odśwież wszystkie pola
+            self.refresh_all_fields()
+    
+    def select_config_file(self):
+        """Wybór pliku konfiguracji"""
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select Configuration File",
+            dir_path,
+            "JSON Files (*.json);;All Files (*.*)"
+        )
+        
+        if file_path:
+            # Załaduj wybraną konfigurację
+            new_config = Config(file_path)
+            self.config = new_config
+            self.temp_settings = self.config.settings.copy()
+            
+            # Zapisz nazwę tego pliku jako ostatnio używany
+            self.config.save_last_config_name()
+            
+            # Zaktualizuj nazwę pliku w UI
+            self.config_file_label.setText(os.path.basename(file_path))
+            
+            # Odśwież wszystkie pola
+            self.refresh_all_fields()
+    
+    def save_config_as(self):
+        """Zapisz aktualną konfigurację do nowego pliku"""
+        file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Configuration As",
+            dir_path,
+            "JSON Files (*.json);;All Files (*.*)"
+        )
+        
+        if file_path:
+            # Upewnij się, że plik ma rozszerzenie .json
+            if not file_path.endswith('.json'):
+                file_path += '.json'
+            
+            # Zaktualizuj temp_settings z aktualnych wartości pól
+            self.update_temp_settings_from_fields()
+            
+            # Stwórz nową konfigurację z tym plikiem
+            new_config = Config(file_path)
+            new_config.settings = self.temp_settings.copy()
+            
+            # Zapisz do nowego pliku
+            if new_config.save():
+                # Przełącz się na nowy plik
+                self.config = new_config
+                # Zapisz nazwę tego pliku jako ostatnio używany
+                self.config.save_last_config_name()
+                self.config_file_label.setText(os.path.basename(file_path))
+                
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Configuration saved to:\n{os.path.basename(file_path)}"
+                )
+            else:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Error",
+                    "Failed to save configuration file."
+                )
+    
+    def update_temp_settings_from_fields(self):
+        """Aktualizuje temp_settings z aktualnych wartości w polach dialogu"""
         # Connection
         self.temp_settings['host'] = self.edit_host.text().strip()
         self.temp_settings['port'] = self.edit_port.value()
@@ -723,35 +873,6 @@ class SettingsDialog(QtWidgets.QDialog):
         
         # Interface
         self.temp_settings['stay_on_top'] = self.check_stay_on_top.isChecked()
-        
-        # Aktualizuj główną konfigurację
-        self.config.settings = self.temp_settings.copy()
-        
-        # Zapisz do pliku
-        if self.config.save():
-            self.accept()
-        else:
-            QtWidgets.QMessageBox.warning(
-                self, 
-                "Error", 
-                "Failed to save settings to file."
-            )
-    
-    def reset_to_defaults(self):
-        """Resetuje wszystkie ustawienia do wartości domyślnych"""
-        reply = QtWidgets.QMessageBox.question(
-            self,
-            "Reset to Defaults",
-            "Are you sure you want to reset all settings to default values?",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No
-        )
-        
-        if reply == QtWidgets.QMessageBox.Yes:
-            self.config.reset_to_defaults()
-            self.temp_settings = self.config.settings.copy()
-            # Odśwież wszystkie pola
-            self.refresh_all_fields()
     
     def refresh_all_fields(self):
         """Odświeża wszystkie pola w dialogu"""
@@ -1551,7 +1672,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tx_active = 0
         self.tx_sent = 0
-        self.tx_meter = DEFAULT_TX_METER
 
         self.filter_width = FILTER_WIDTH_USB_NORMAL
         self.current_freq = 14074000  # Hz (odczyt z rigctld)
@@ -1914,18 +2034,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.swr_meter.setFont(METERS_FONT)
         self.swr_meter.setValue(0)
         self.swr_meter.setFormat(f"SWR: {'-':>5}")
-
-        self.tx_meter_label = QtWidgets.QLabel("on TX:")
-        self.cmb_smeter = QtWidgets.QComboBox()
-        self.cmb_smeter.addItem('SWR')
-        self.cmb_smeter.addItem('ALC')
-        self.cmb_smeter.addItem('PWR')
-        self.cmb_smeter.activated.connect(self.cmb_smeter_change)
-        self.cmb_smeter.setFixedWidth(64)
-
-        self.layout_tx_meter = QtWidgets.QHBoxLayout()
-        self.layout_tx_meter.addWidget(self.tx_meter_label)
-        self.layout_tx_meter.addWidget(self.cmb_smeter)
+        self.swr_meter.hide()  # Ukryj na start, zamieni się z S-METER podczas TX
 
         # Filter width
         self.filter_width_group = QtWidgets.QGroupBox("Filter")
@@ -2104,10 +2213,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.smeter_row = QtWidgets.QHBoxLayout()
         self.smeter_row.addWidget(self.s_meter)
+        self.smeter_row.addWidget(self.swr_meter)
         self.smeter_row.addSpacing(20)
         self.smeter_row.addWidget(self.alc_meter)
         self.smeter_row.addSpacing(20)
-        self.smeter_row.addLayout(self.layout_tx_meter)
+        self.smeter_row.addWidget(self.po_meter)
+        
+        # ALC i POWER zawsze widoczne, SWR ukryty (pojawi się zamiast S-METER podczas TX)
 
         # --- sterowanie ---
         controls = QtWidgets.QHBoxLayout()
@@ -2556,7 +2668,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def parse_get_freq(self, val):
         freq = int(val.split('Frequency: ')[1].split('\n')[0])
-        updated_needed = False
+        updated_needed = True
 
         if freq != self.current_freq:
             updated_needed = True
@@ -3026,23 +3138,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.client.send(cmd)
 
     def replace_s_meter_when_tx(self, tx_state):
-        if self.tx_meter is SWR_METER:
-            new_meter = self.swr_meter
-        elif self.tx_meter is ALC_METER:
-            new_meter = self.alc_meter
-        elif self.tx_meter is PO_METER:
-            new_meter = self.po_meter
-        else:
-            new_meter = self.swr_meter
-
+        """Przełącza między S-METER (RX) a SWR (TX). ALC i POWER zawsze widoczne."""
         if tx_state:
-            self.smeter_row.replaceWidget(self.s_meter, new_meter)
+            # TX - zamień S-METER na SWR
             self.s_meter.hide()
-            new_meter.show()
+            self.swr_meter.show()
         else:
-            self.smeter_row.replaceWidget(new_meter, self.s_meter)
+            # RX - zamień SWR na S-METER
             self.s_meter.show()
-            new_meter.hide()
+            self.swr_meter.hide()
 
     @QtCore.pyqtSlot(int)
     def tx_action(self, val: int):
@@ -3111,8 +3215,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def open_settings(self):
         """Otwiera dialog ustawień"""
+        global config
         dlg = SettingsDialog(self, config)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            # Zaktualizuj globalną instancję config jeśli zmieniono plik
+            config = dlg.config
+            
             # Po zapisaniu ustawień, zaktualizuj elementy UI które można zmienić bez restartu
             self.update_from_config()
             
@@ -3160,13 +3268,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.show()  # Trzeba pokazać okno ponownie po zmianie flag
 
 
-    def cmb_smeter_change(self):
-        if self.cmb_smeter.currentText() == 'ALC':
-            self.tx_meter = ALC_METER
-        elif self.cmb_smeter.currentText() == 'SWR':
-            self.tx_meter = SWR_METER
-        elif self.cmb_smeter.currentText() == 'PWR':
-            self.tx_meter = PO_METER
+
 
     def ptt_btn_pressed(self):
         self.send_tx_signal.emit(1)
