@@ -1,8 +1,11 @@
 Software for ham radio remote control.
 
+<img width="2088" height="1728" alt="obraz" src="https://github.com/user-attachments/assets/822b00c2-6ae6-4de0-9fce-954782a1edd9" />
+
+
 Currently configured for Yaesu FT-450D and Hamlib software run on Raspberry Pi4.
 OpenWebRX+ for waterfall view.
-~~Mumble~~ SonoBus for voice transmission.
+Mumble for voice transmission.
 
 **New version with built in waterfall view**
 <img width="2052" height="563" alt="rig_w_waterfall" src="https://github.com/user-attachments/assets/4b6b4ae6-f0c1-45b6-9cf6-4f016ff7dfef" />
