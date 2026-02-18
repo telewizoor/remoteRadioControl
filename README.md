@@ -8,7 +8,8 @@ OpenWebRX+ for waterfall view.
 Mumble for voice transmission.
 
 **New version with built in waterfall view**
-<img width="2052" height="563" alt="rig_w_waterfall" src="https://github.com/user-attachments/assets/4b6b4ae6-f0c1-45b6-9cf6-4f016ff7dfef" />
+<img width="2052" height="468" alt="obraz" src="https://github.com/user-attachments/assets/edd8b1ae-b346-4ab2-8e43-c3a69cf92512" />
+
 
 **tldr:**
 
