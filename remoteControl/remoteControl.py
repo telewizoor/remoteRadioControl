@@ -147,7 +147,7 @@ class Config:
             last_config_path = os.path.join(dir_path, Config.LAST_CONFIG_FILE)
             if os.path.exists(last_config_path):
                 with open(last_config_path, 'r') as f:
-                    config_file = f.read().strip()
+                    config_file = os.path.join(dir_path, f.read().strip())
                     if os.path.exists(config_file):
                         return config_file
         except Exception as e:

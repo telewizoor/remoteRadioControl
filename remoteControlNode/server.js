@@ -2,16 +2,64 @@
 const express = require('express');
 const net = require('net');
 const path = require('path');
+const https = require('https');
+const fs = require('fs');
 const app = express();
 
 // Konfiguracja
 const RIGCTLD_HOST = '0.0.0.0';
 const RIGCTLD_PORT = 4532;
-const WEB_PORT = 80;
-const TCP_TIMEOUT = 1000; // zwiększony timeout
+const WEB_PORT = 443;
+const TCP_TIMEOUT = 1000;
+
+// Python WebRTC serwer (lokalnie na RPi)
+const PYTHON_SERVER = 'https://127.0.0.1:8443';
 
 app.use(express.json());
 app.use(express.static('public'));
+
+// ── Proxy do Python WebRTC serwera ──────────────────────────
+app.post('/offer', async (req, res) => {
+    try {
+        // Node.js nie ma fetch wbudowanego w starszych wersjach — użyj http/https
+        const data = JSON.stringify(req.body);
+
+        const options = {
+            hostname: '127.0.0.1',
+            port: 8443,
+            path: '/offer',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(data),
+            },
+            // Ignoruj self-signed cert Pythona (lokalne połączenie)
+            rejectUnauthorized: false,
+        };
+
+        const proxyReq = https.request(options, (proxyRes) => {
+            let body = '';
+            proxyRes.on('data', chunk => body += chunk);
+            proxyRes.on('end', () => {
+                res.setHeader('Content-Type', 'application/json');
+                res.send(body);
+            });
+        });
+
+        proxyReq.on('error', (err) => {
+            console.error('Błąd proxy do Python:', err.message);
+            res.status(502).json({ error: 'Python WebRTC serwer niedostępny' });
+        });
+
+        proxyReq.write(data);
+        proxyReq.end();
+
+    } catch (err) {
+        console.error('Offer proxy error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+// ────────────────────────────────────────────────────────────
 
 // Funkcja do komunikacji z rigctld
 function sendRigCommand(cmd) {
@@ -22,281 +70,166 @@ function sendRigCommand(cmd) {
         client.setTimeout(TCP_TIMEOUT);
 
         client.connect(RIGCTLD_PORT, RIGCTLD_HOST, () => {
-            if (!cmd.endsWith('\n')) {
-                cmd = cmd + '\n';
-            }
+            if (!cmd.endsWith('\n')) cmd = cmd + '\n';
             client.write(cmd);
         });
 
         client.on('data', (chunk) => {
             data += chunk.toString();
-            // Jeśli dostaliśmy RPRT lub koniec linii, zakończ
-            if (data.includes('RPRT') || data.endsWith('\n')) {
-                client.destroy();
-            }
+            if (data.includes('RPRT') || data.endsWith('\n')) client.destroy();
         });
 
-        client.on('close', () => {
-            resolve(data.trim());
-        });
-
-        client.on('error', (err) => {
-            client.destroy();
-            reject(err);
-        });
-
-        client.on('timeout', () => {
-            client.destroy();
-            reject(new Error('Timeout'));
-        });
+        client.on('close', () => resolve(data.trim()));
+        client.on('error', (err) => { client.destroy(); reject(err); });
+        client.on('timeout', () => { client.destroy(); reject(new Error('Timeout')); });
     });
 }
 
-// API Endpoints
-
-// Pobierz status zasilania
+// API Endpoints (bez zmian)
 app.get('/api/powerstat', async (req, res) => {
     try {
         const result = await sendRigCommand('\\get_powerstat');
-        console.log('Powerstat raw:', result);
-        const status = parseInt(result.trim());
-        res.json({ power: status });
-    } catch (err) {
-        console.error('Powerstat error:', err);
-        res.status(500).json({ error: err.message });
-    }
+        res.json({ power: parseInt(result.trim()) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Ustaw status zasilania
 app.post('/api/powerstat', async (req, res) => {
     try {
-        const { state } = req.body;
-        const result = await sendRigCommand(`\\set_powerstat ${state}`);
-        console.log('Set powerstat result:', result);
+        await sendRigCommand(`\\set_powerstat ${req.body.state}`);
         res.json({ success: true });
-    } catch (err) {
-        console.error('Set powerstat error:', err);
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Pobierz częstotliwość
 app.get('/api/frequency', async (req, res) => {
     try {
         const result = await sendRigCommand('f');
-        const freq = result.split('\n')[0].trim();
-        res.json({ frequency: parseInt(freq) });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        res.json({ frequency: parseInt(result.split('\n')[0].trim()) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Ustaw częstotliwość
 app.post('/api/frequency', async (req, res) => {
     try {
-        const { frequency } = req.body;
-        await sendRigCommand(`F ${frequency}`);
+        await sendRigCommand(`F ${req.body.frequency}`);
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Pobierz informacje o VFO
 app.get('/api/vfo/:vfo', async (req, res) => {
     try {
-        const vfo = req.params.vfo.toUpperCase();
-        const result = await sendRigCommand(`\\get_vfo_info ${vfo}`);
-        
+        const result = await sendRigCommand(`\\get_vfo_info ${req.params.vfo.toUpperCase()}`);
         const freqMatch = result.match(/Freq: (-?\d+)/);
         const modeMatch = result.match(/Mode: (\w+)/);
         const widthMatch = result.match(/Width: (\d+)/);
-        
         res.json({
             frequency: freqMatch ? parseInt(freqMatch[1]) : 0,
             mode: modeMatch ? modeMatch[1] : 'USB',
             width: widthMatch ? parseInt(widthMatch[1]) : 2400
         });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Pobierz aktywny VFO
 app.get('/api/vfo', async (req, res) => {
     try {
         const result = await sendRigCommand('v');
-        const vfo = result.split('\n')[0].trim();
-        res.json({ vfo: vfo });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        res.json({ vfo: result.split('\n')[0].trim() });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Przełącz VFO (A/B)
 app.post('/api/vfo/switch', async (req, res) => {
-    try {
-        await sendRigCommand('G XCHG');
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    try { await sendRigCommand('G XCHG'); res.json({ success: true }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Pobierz mode
 app.get('/api/mode', async (req, res) => {
     try {
         const result = await sendRigCommand('m');
         const lines = result.split('\n');
-        const mode = lines[0].trim();
-        const width = lines[1] ? parseInt(lines[1].trim()) : 0;
-        res.json({ mode, width });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        res.json({ mode: lines[0].trim(), width: lines[1] ? parseInt(lines[1].trim()) : 0 });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Ustaw mode
 app.post('/api/mode', async (req, res) => {
     try {
-        const { mode, width } = req.body;
-        await sendRigCommand(`M ${mode} ${width || 0}`);
+        await sendRigCommand(`M ${req.body.mode} ${req.body.width || 0}`);
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Zmiana pasma w górę
 app.post('/api/band/up', async (req, res) => {
-    try {
-        await sendRigCommand('G BAND_UP');
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    try { await sendRigCommand('G BAND_UP'); res.json({ success: true }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Zmiana pasma w dół
 app.post('/api/band/down', async (req, res) => {
-    try {
-        await sendRigCommand('G BAND_DOWN');
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    try { await sendRigCommand('G BAND_DOWN'); res.json({ success: true }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// A=B
 app.post('/api/vfo/copy', async (req, res) => {
-    try {
-        await sendRigCommand('G CPY');
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    try { await sendRigCommand('G CPY'); res.json({ success: true }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PTT
 app.post('/api/ptt', async (req, res) => {
-    try {
-        const { state } = req.body;
-        await sendRigCommand(`T ${state}`);
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    try { await sendRigCommand(`T ${req.body.state}`); res.json({ success: true }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Split
 app.post('/api/split', async (req, res) => {
-    try {
-        const { state, vfo } = req.body;
-        await sendRigCommand(`S ${state} ${vfo}`);
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    try { await sendRigCommand(`S ${req.body.state} ${req.body.vfo}`); res.json({ success: true }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Poziomy (Volume, Squelch, etc.)
 app.get('/api/level/:level', async (req, res) => {
     try {
-        const level = req.params.level;
-        const result = await sendRigCommand(`l ${level}`);
-        const lines = result.split('\n');
-        const value = lines.length > 0 ? parseFloat(lines[0].trim()) : 0;
-        res.json({ value });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        const result = await sendRigCommand(`l ${req.params.level}`);
+        res.json({ value: parseFloat(result.split('\n')[0].trim()) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/level/:level', async (req, res) => {
-    try {
-        const level = req.params.level;
-        const { value } = req.body;
-        await sendRigCommand(`L ${level} ${value}`);
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    try { await sendRigCommand(`L ${req.params.level} ${req.body.value}`); res.json({ success: true }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Funkcje (Tuner, NB, etc.)
 app.get('/api/func/:func', async (req, res) => {
     try {
-        const func = req.params.func;
-        const result = await sendRigCommand(`u ${func}`);
-        const lines = result.split('\n');
-        const value = lines.length > 0 ? parseInt(lines[0].trim()) : 0;
-        res.json({ value });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        const result = await sendRigCommand(`u ${req.params.func}`);
+        res.json({ value: parseInt(result.split('\n')[0].trim()) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/func/:func', async (req, res) => {
-    try {
-        const func = req.params.func;
-        const { value } = req.body;
-        await sendRigCommand(`U ${func} ${value}`);
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    try { await sendRigCommand(`U ${req.params.func} ${req.body.value}`); res.json({ success: true }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// S-meter
 app.get('/api/strength', async (req, res) => {
     try {
         const result = await sendRigCommand('l STRENGTH');
-        const lines = result.split('\n');
-        const value = lines.length > 0 ? parseInt(lines[0].trim()) : 0;
-        res.json({ value });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        res.json({ value: parseInt(result.split('\n')[0].trim()) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// TX status
 app.get('/api/tx', async (req, res) => {
     try {
         const result = await sendRigCommand('t');
         const match = result.match(/PTT: (\d+)/);
-        const status = match ? parseInt(match[1]) : 0;
-        res.json({ tx: status });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        res.json({ tx: match ? parseInt(match[1]) : 0 });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Serwowanie strony głównej
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(WEB_PORT, () => {
-    console.log(`Web Radio Control running on http://localhost:${WEB_PORT}`);
-    console.log(`Connecting to rigctld at ${RIGCTLD_HOST}:${RIGCTLD_PORT}`);
+// HTTPS — wymagane dla WebRTC (mikrofon działa tylko na HTTPS)
+const sslOptions = {
+    key:  fs.readFileSync('key.pem'),
+    cert: fs.readFileSync('cert.pem'),
+};
+
+require('https').createServer(sslOptions, app).listen(WEB_PORT, () => {
+    console.log(`Web Radio Control: https://localhost:${WEB_PORT}`);
+    console.log(`Proxy WebRTC → Python: ${PYTHON_SERVER}`);
 });

@@ -1,0 +1,70 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) Gecko/20100101 Firefox/147.0" version="29.4.0">
+  <diagram name="Strona-1" id="LzXVI2yu3pQhwQr5AHgX">
+    <mxGraphModel dx="1295" dy="693" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="Ye126CQw93ClKGzQQ8J--23" connectable="0" parent="1" style="group" value="" vertex="1">
+          <mxGeometry height="410" width="500" as="geometry" />
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--22" parent="Ye126CQw93ClKGzQQ8J--23" style="swimlane;startSize=0;fillColor=#FFFFFF;swimlaneFillColor=default;" value="" vertex="1">
+          <mxGeometry height="410" width="500" as="geometry">
+            <mxRectangle height="40" width="50" x="180" y="40" as="alternateBounds" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--19" parent="Ye126CQw93ClKGzQQ8J--22" style="text;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;rounded=0;fillColor=#f5f5f5;fontColor=#333333;strokeColor=#666666;" value="&lt;h1&gt;&lt;font style=&quot;font-size: 32px;&quot;&gt;Server side&lt;/font&gt;&lt;/h1&gt;" vertex="1">
+          <mxGeometry height="50" width="210" x="129" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--5" edge="1" parent="Ye126CQw93ClKGzQQ8J--23" source="Ye126CQw93ClKGzQQ8J--1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="Ye126CQw93ClKGzQQ8J--4" value="Audio in/out">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--6" edge="1" parent="Ye126CQw93ClKGzQQ8J--23" source="Ye126CQw93ClKGzQQ8J--1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="Ye126CQw93ClKGzQQ8J--2" value="Cat control">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--12" edge="1" parent="Ye126CQw93ClKGzQQ8J--23" source="Ye126CQw93ClKGzQQ8J--1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;" target="Ye126CQw93ClKGzQQ8J--9">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="150" y="160" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--14" edge="1" parent="Ye126CQw93ClKGzQQ8J--23" source="Ye126CQw93ClKGzQQ8J--1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="Ye126CQw93ClKGzQQ8J--13" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="60" y="160" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--1" parent="Ye126CQw93ClKGzQQ8J--23" style="rounded=1;whiteSpace=wrap;html=1;" value="RaspberryPi / PC" vertex="1">
+          <mxGeometry height="80" width="160" x="10" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--2" parent="Ye126CQw93ClKGzQQ8J--23" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;" value="USB/RS232" vertex="1">
+          <mxGeometry height="40" width="120" x="250" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--11" edge="1" parent="Ye126CQw93ClKGzQQ8J--23" source="Ye126CQw93ClKGzQQ8J--3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="Ye126CQw93ClKGzQQ8J--9" value="RF tap">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="430" y="300" />
+            </Array>
+            <mxPoint x="330" y="300" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--3" parent="Ye126CQw93ClKGzQQ8J--23" style="rounded=1;whiteSpace=wrap;html=1;" value="Rig (eg. FT450D)" vertex="1">
+          <mxGeometry height="80" width="120" x="370" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--4" parent="Ye126CQw93ClKGzQQ8J--23" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;" value="USB Audio" vertex="1">
+          <mxGeometry height="40" width="120" x="250" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--9" parent="Ye126CQw93ClKGzQQ8J--23" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;rotation=90;" value="RTL SDR" vertex="1">
+          <mxGeometry height="40" width="120" x="90" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--10" parent="Ye126CQw93ClKGzQQ8J--23" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;" value="OpenWebRX+" vertex="1">
+          <mxGeometry height="40" width="120" x="90" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="Ye126CQw93ClKGzQQ8J--13" parent="Ye126CQw93ClKGzQQ8J--23" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;div&gt;Antenna switch&lt;/div&gt;&lt;div&gt;(relays)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="60" x="30" y="260" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -4,3 +4,4 @@ sounddevice
 soundfile
 websocket
 websocket-client
+numpy
