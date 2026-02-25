@@ -51,9 +51,9 @@
         <h1 id="title">Remote Radio Control</h1>
 
         <div class="control-panel">
-            <!-- Częstotliwość -->
+            <!-- Frequency -->
             <div class="section">
-                <h2>Częstotliwość</h2>
+                <h2>Frequency</h2>
                 <div class="frequency-display">
                     <div class="freq-label">VFO A</div>
                     <div class="freq-main" id="freqA">14.074000</div>
@@ -67,13 +67,13 @@
                     <button class="btn" onclick="frequencyStep(-2500)">- 2.5kHz</button>
                 </div>
                 <div style="margin-top: 15px;">
-                    <input type="number" id="freqInput" placeholder="Częstotliwość (Hz)" onchange="setFrequency(this.value)">
+                    <input type="number" id="freqInput" placeholder="Frequency (Hz)" onchange="setFrequency(this.value)">
                 </div>
             </div>
 
-            <!-- Kontrola -->
+            <!-- Control -->
             <div class="section">
-                <h2>Kontrola</h2>
+                <h2>Control</h2>
                 <div class="button-grid">
                     <button class="btn btn-power" id="powerBtn" onclick="togglePower()">ON</button>
                     <button class="btn" onclick="bandUp()">BAND ↑</button>
@@ -119,15 +119,15 @@
                     <input type="range" id="squelch" min="0" max="100" value="0" onchange="setLevel('SQL', this.value/100)">
                 </div>
                 <div style="display:flex; flex-direction:column; gap:12px;">
-                    <button class="btn btn-power" id="audioBtn" onclick="toggleAudio()">▶ Połącz audio</button>
+                    <button class="btn btn-power" id="audioBtn" onclick="toggleAudio()">▶ Connect Audio</button>
                     <div id="audioStatus" style="text-align:center; color:#888; font-size:13px;">disconnected</div>
                 </div>
                 <audio id="radioAudio" autoplay style="display:none"></audio>
             </div>
 
-            <!-- Funkcje -->
+            <!-- Functions -->
             <div class="section">
-                <h2>Funkcje</h2>
+                <h2>Functions</h2>
                 <div class="button-grid">
                     <button class="btn" id="tunerBtn" onclick="toggleFunc('TUNER')">TUNER</button>
                     <button class="btn" id="nbBtn" onclick="toggleFunc('NB')">NB</button>
@@ -150,7 +150,7 @@
 
         <div class="status-bar">
             <span class="vfo-indicator" id="vfoIndicator">VFO A</span>
-            <span id="statusMsg">Łączenie...</span>
+            <span id="statusMsg">Connecting...</span>
         </div>
     </div>
 
@@ -179,7 +179,7 @@
                 return await response.json();
             } catch (error) {
                 console.error('API Error:', error);
-                updateStatus('Błąd połączenia', true);
+                updateStatus('Connection Error', true);
                 return null;
             }
         }
@@ -222,14 +222,14 @@
             if (att !== null) document.getElementById('attBtn').classList.toggle('btn-active', att.value > 0);
             if (preamp !== null) document.getElementById('ipoBtn').classList.toggle('btn-active', preamp.value > 0);
 
-            updateStatus('Połączono', false);
+            updateStatus('Connected', false);
         }
 
         function updateFrequencyDisplay() {
             document.getElementById('freqA').textContent = (currentFreq / 1000000).toFixed(6);
             const input = document.getElementById('freqInput');
 
-            // nie nadpisuj jeśli użytkownik aktualnie edytuje
+            // do not overwrite if the user is currently editing
             if (document.activeElement !== input) {
                 input.value = currentFreq;
             }
@@ -354,9 +354,9 @@
         async function connectAudio() {
             const btn = document.getElementById('audioBtn');
             const status = document.getElementById('audioStatus');
-            btn.textContent = '⏳ Łączenie...';
+            btn.textContent = '⏳ Connecting...';
             btn.disabled = true;
-            status.textContent = 'Łączenie...';
+            status.textContent = 'Connecting...';
             status.style.color = '#ffd700';
 
             try {
@@ -385,7 +385,7 @@
                     status.textContent = s;
                     if (s === 'connected') {
                         status.style.color = '#4CAF50';
-                        btn.textContent = '■ Rozłącz audio';
+                        btn.textContent = '■ Disconnect Audio';
                         btn.disabled = false;
                         btn.classList.add('off');
                     } else if (s === 'failed' || s === 'disconnected' || s === 'closed') {
@@ -412,7 +412,7 @@
 
             } catch (err) {
                 console.error('WebRTC error:', err);
-                status.textContent = 'Błąd: ' + err.message;
+                status.textContent = 'Error: ' + err.message;
                 status.style.color = '#ff6b6b';
                 disconnectAudio();
             }
@@ -423,10 +423,10 @@
             if (audioCtx) { audioCtx.close(); audioCtx = null; }
             if (pc) { pc.close(); pc = null; }
             const btn = document.getElementById('audioBtn');
-            btn.textContent = '▶ Połącz audio';
+            btn.textContent = '▶ Connect Audio';
             btn.disabled = false;
             btn.classList.remove('off');
-            document.getElementById('audioStatus').textContent = 'Rozłączono';
+            document.getElementById('audioStatus').textContent = 'Disconnected';
             document.getElementById('audioStatus').style.color = '#888';
             document.getElementById('radioAudio').srcObject = null;
         }

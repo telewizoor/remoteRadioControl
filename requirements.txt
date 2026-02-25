@@ -1,0 +1,6 @@
+av
+numpy
+sounddevice
+aiohttp
+aiortc
+aiohttp-cors
