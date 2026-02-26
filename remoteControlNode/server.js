@@ -11,7 +11,7 @@ const RIGCTLD_HOST = '0.0.0.0';
 const RIGCTLD_PORT = 4532;
 const WEB_PORT = 443;
 const TCP_TIMEOUT = 1000;
-const ANTENNA_SWITCH_HOST = '127.0.0.1';
+const ANTENNA_SWITCH_HOST = '0.0.0.0';
 const ANTENNA_SWITCH_PORT = 5000;
 
 // Python WebRTC serwer (lokalnie na RPi)
