@@ -1,12 +1,12 @@
 [Unit]
-Description=Cat Control Service
+Description=Start Hamlib Service
 After=multi-user.target
 
 [Service]
-ExecStart=%h/Project/remoteRadioControl/raspberry/startCAT.sh
+ExecStart=/home/pi/Project/remoteRadioControl/server/startHamlib.sh
 Restart=always
 RestartSec=30
-WorkingDirectory=%h/Project/remoteRadioControl/raspberry
+WorkingDirectory=/home/pi/Project/remoteRadioControl/server
 StandardOutput=journal
 StandardError=journal
 Type=simple

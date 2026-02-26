@@ -1,6 +1,8 @@
-av>=10
+av
 numpy
 sounddevice
 aiohttp
 aiortc
 aiohttp-cors
+websockets
+Cython

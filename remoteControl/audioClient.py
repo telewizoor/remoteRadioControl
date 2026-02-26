@@ -2,15 +2,14 @@
 """
 Klient WebRTC — Windows PC
 Odbiera audio z radia, wysyła mikrofon.
-Opus po stronie aiortc sam ogarnia resample.
 
 Instalacja:
     pip install aiortc aiohttp sounddevice numpy
 
 Użycie:
-    python receive_audio.py                        # domyślne urządzenia
-    python receive_audio.py --list-devices         # lista urządzeń
-    python receive_audio.py --input 1 --output 3  # konkretne urządzenia
+    python audioClient.py                          # domyślne urządzenia
+    python audioClient.py --list-devices           # lista urządzeń
+    python audioClient.py --input 1 --output 3    # konkretne urządzenia
 """
 
 import asyncio
@@ -27,13 +26,26 @@ import aiohttp
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("client")
+# Logging — gdy używany jako moduł nie wysyła nic (NullHandler).
+# Przy uruchomieniu bezpośrednim basicConfig jest wywoływany w __main__.
+log = logging.getLogger("audioClient")
+log.addHandler(logging.NullHandler())
 
-SERVER     = "https://192.168.152.12:8443"
-SD_RATE    = 48000
+SERVER      = "https://192.168.152.12:8443"
+SD_RATE     = 48000
 SAMPLE_TIME = 20
-BLOCK_SIZE  = SD_RATE * SAMPLE_TIME // 1000  # 960 próbki = 20ms
+BLOCK_SIZE  = SD_RATE * SAMPLE_TIME // 1000   # 960 próbek = 20 ms
+
+# Rozmiar kolejki odbioru: ~300 ms bufora jitter. Przy maxsize=3 (60 ms) każde
+# chwilowe opóźnienie sieci powoduje underrun → skok do zera → trzask.
+RX_QUEUE_SIZE = 3
+
+# Ile próbek wstępnie buforować zanim zacznie wychodzić dźwięk (2 bloki = 40 ms).
+RX_PREFILL = 2
+
+# Długość fade-out przy underrun (próbki). Zamiast skoku do zera stosujemy
+# krótkie wygaszenie, co eliminuje "klik".
+FADE_LEN = 256
 
 # ─────────────────────────────────────────────────────────────
 # ODBIÓR: WebRTC track → sounddevice output
@@ -43,32 +55,49 @@ class RadioPlayer:
 
     def __init__(self, device):
         self._device    = device
-        self._sync_q    = queue.Queue(maxsize=3)
+        self._sync_q    = queue.Queue(maxsize=RX_QUEUE_SIZE)
         self._resampler = av.AudioResampler(format="s16", layout="mono", rate=SD_RATE)
+        self._prefilled = False
+        # ostatni odtworzony fragment — do fade-out przy underrun
+        self._last      = np.zeros(BLOCK_SIZE, dtype=np.float32)
+        self._fade_win  = np.linspace(1.0, 0.0, FADE_LEN, dtype=np.float32)
 
     def start(self, loop):
-        # uruchom sounddevice w osobnym wątku
         t = threading.Thread(target=self._sd_thread, daemon=True)
         t.start()
 
     def _sd_thread(self):
-        silence = np.zeros(BLOCK_SIZE, dtype=np.float32)
 
         def callback(outdata, frames, time_info, status):
+            # Czekaj na wstępne buforowanie żeby uniknąć natychmiastowych underrunów.
+            if not self._prefilled:
+                if self._sync_q.qsize() >= RX_PREFILL:
+                    self._prefilled = True
+                else:
+                    outdata[:, 0] = 0.0
+                    return
+
             try:
                 chunk = self._sync_q.get_nowait()
                 if len(chunk) < frames:
                     chunk = np.pad(chunk, (0, frames - len(chunk)))
+                self._last[:] = chunk[:BLOCK_SIZE]
                 outdata[:, 0] = chunk[:frames]
             except queue.Empty:
-                outdata[:, 0] = silence[:frames]
+                # Łagodne wygaszenie zamiast skoku do zera → brak trzasku
+                fade = self._last.copy()
+                apply = min(FADE_LEN, frames)
+                fade[:apply] *= self._fade_win[:apply]
+                fade[apply:]  = 0.0
+                self._last[:] = 0.0
+                outdata[:, 0] = fade[:frames]
 
         kwargs = dict(samplerate=SD_RATE, channels=1, dtype="float32",
                       blocksize=BLOCK_SIZE, callback=callback)
         if self._device is not None:
             kwargs["device"] = self._device
 
-        log.info("Odtwarzanie: device=%s %dHz", self._device, SD_RATE)
+        log.debug("Odtwarzanie: device=%s %d Hz", self._device, SD_RATE)
         with sd.OutputStream(**kwargs):
             while True:
                 time.sleep(1)
@@ -77,27 +106,22 @@ class RadioPlayer:
         asyncio.ensure_future(self._run(track))
 
     async def _run(self, track):
-        cnt = 0
-        log.info("RadioPlayer: start odbioru")
+        log.debug("RadioPlayer: start odbioru")
         while True:
             try:
                 frame = await track.recv()
-                cnt += 1
-                if cnt == 1:
-                    log.info("FRAME: fmt=%s rate=%d samples=%d layout=%s",
-                             frame.format.name, frame.sample_rate, frame.samples, frame.layout.name)
-
-                # Resampler ogarnie każdy format/layout → s16 mono 48kHz
                 for f in self._resampler.resample(frame):
-                    raw = np.frombuffer(bytes(f.planes[0]), dtype=np.int16)
+                    raw     = np.frombuffer(bytes(f.planes[0]), dtype=np.int16)
                     samples = raw.astype(np.float32) / 32768.0
                     try:
                         self._sync_q.put_nowait(samples)
                     except queue.Full:
-                        pass
-
-                # if cnt % 200 == 1:
-                #     log.info("RX radio #%d rate=%d layout=%s", cnt, frame.sample_rate, frame.layout.name)
+                        # Kolejka pełna — stary bufor wypychamy żeby zrobić miejsce
+                        try:
+                            self._sync_q.get_nowait()
+                        except queue.Empty:
+                            pass
+                        self._sync_q.put_nowait(samples)
             except Exception as e:
                 log.warning("RadioPlayer koniec: %s", e)
                 break
@@ -113,10 +137,9 @@ class MicTrack(MediaStreamTrack):
     def __init__(self, device):
         super().__init__()
         self._device    = device
-        self._sync_q    = queue.Queue(maxsize=3)
+        self._sync_q    = queue.Queue(maxsize=6)
         self._pts       = 0
         self._time_base = fractions.Fraction(1, SD_RATE)
-        self._cnt       = 0
 
     def start_capture(self):
         t = threading.Thread(target=self._sd_thread, daemon=True)
@@ -128,33 +151,32 @@ class MicTrack(MediaStreamTrack):
             try:
                 self._sync_q.put_nowait(chunk)
             except queue.Full:
-                pass
+                # Zamiast cicho upuścić ramkę, wyrzuć najstarszą
+                try:
+                    self._sync_q.get_nowait()
+                except queue.Empty:
+                    pass
+                self._sync_q.put_nowait(chunk)
 
         kwargs = dict(samplerate=SD_RATE, channels=1, dtype="float32",
                       blocksize=BLOCK_SIZE, callback=callback)
         if self._device is not None:
             kwargs["device"] = self._device
 
-        log.info("Mikrofon: device=%s %dHz", self._device, SD_RATE)
+        log.debug("Mikrofon: device=%s %d Hz", self._device, SD_RATE)
         with sd.InputStream(**kwargs):
             while True:
                 time.sleep(1)
 
     async def recv(self):
         loop = asyncio.get_event_loop()
-        # Pobierz blok z mikrofonu (blokujące — w executorze)
         chunk = await loop.run_in_executor(None, self._sync_q.get)
 
-        frame = av.AudioFrame.from_ndarray(chunk.reshape(1, -1), format="s16", layout="mono")
+        frame            = av.AudioFrame.from_ndarray(chunk.reshape(1, -1), format="s16", layout="mono")
         frame.sample_rate = SD_RATE
         frame.pts         = self._pts
         frame.time_base   = self._time_base
         self._pts        += len(chunk)
-
-        self._cnt += 1
-        if self._cnt % 200 == 1:
-            log.info("TX mic #%d peak=%d", self._cnt, int(np.max(np.abs(chunk))))
-
         return frame
 
 
@@ -184,7 +206,7 @@ async def run(input_device, output_device, status_callback=None, stop_event=None
 
     @pc.on("track")
     def on_track(track):
-        log.info("Track z RPi: %s", track.kind)
+        log.debug("Track z RPi: %s", track.kind)
         if track.kind == "audio":
             player.addTrack(track)
 
@@ -196,12 +218,10 @@ async def run(input_device, output_device, status_callback=None, stop_event=None
 
     @pc.on("iceconnectionstatechange")
     async def on_ice():
-        log.info("ICE: %s", pc.iceConnectionState)
+        log.debug("ICE: %s", pc.iceConnectionState)
 
     offer = await pc.createOffer()
-
     await pc.setLocalDescription(offer)
-    log.info("SDP offer:\n%s", offer.sdp)
 
     for _ in range(30):
         if pc.iceGatheringState == "complete":
@@ -209,8 +229,6 @@ async def run(input_device, output_device, status_callback=None, stop_event=None
         await asyncio.sleep(0.1)
 
     log.info("Wysyłam offer → %s", target_server)
-
-    asyncio.create_task(monitor(pc))
 
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_ctx)) as session:
         async with session.post(
@@ -220,26 +238,13 @@ async def run(input_device, output_device, status_callback=None, stop_event=None
             data = await resp.json()
 
     await pc.setRemoteDescription(RTCSessionDescription(sdp=data["sdp"], type=data["type"]))
-    log.info("Połączono! Ctrl+C żeby zatrzymać.")
+    log.info("Połączono!")
 
     if stop_event is not None:
-        # Czekaj aż stop_event zostanie ustawiony (threading.Event)
         await loop.run_in_executor(None, stop_event.wait)
         await pc.close()
     else:
         await asyncio.Event().wait()
-
-async def monitor(pc):
-    prev = 0
-    while True:
-        stats = await pc.getStats()
-        for r in stats.values():
-            if r.type == "outbound-rtp" and r.kind == "audio":
-                now = r.bytesSent
-                bitrate = (now - prev) * 8 / 2 / 1000
-                print("AUDIO kbps:", bitrate)
-                prev = now
-        await asyncio.sleep(2)
 
 
 
@@ -248,7 +253,14 @@ if __name__ == "__main__":
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument("--input",  type=int, default=None, metavar="N")
     parser.add_argument("--output", type=int, default=None, metavar="N")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Pokaż szczegółowe logi (DEBUG)")
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
     if args.list_devices:
         print(sd.query_devices())

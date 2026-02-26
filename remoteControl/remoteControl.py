@@ -11,7 +11,7 @@ import websocket
 import json
 
 from soundPlayer import playSound, stopSound
-from audioClient import RadioPlayer as audioClientRadioPlayer, MicTrack as audioClientMicTrack, run as audioClientRun
+from audioClient import run as audioClientRun
 from pynput import keyboard
 from PyQt5.QtCore import QTimer
 from PyQt5 import QtCore, QtGui, QtWidgets
@@ -23,7 +23,7 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 class Config:
     """Class managing application configuration"""
     
-    LAST_CONFIG_FILE = 'last_config.txt'
+    BASE_CONFIG_FILE = 'config.json'
     
     def __init__(self, config_file='config.json'):
         # If config_file is a full path, use it directly
@@ -102,6 +102,8 @@ class Config:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     loaded = json.load(f)
+                    # Strip meta key - not a setting
+                    loaded.pop('active_config', None)
                     # Merges loaded settings with defaults
                     self.settings.update(loaded)
                 print(f"Configuration loaded from {self.config_file}")
@@ -115,8 +117,19 @@ class Config:
     def save(self):
         """Saves configuration to JSON file"""
         try:
+            data_to_save = self.settings.copy()
+            base_config_path = os.path.join(dir_path, self.BASE_CONFIG_FILE)
+            # If saving to base config.json, preserve the active_config meta field
+            if os.path.normcase(self.config_file) == os.path.normcase(base_config_path):
+                try:
+                    with open(self.config_file, 'r', encoding='utf-8') as f:
+                        existing = json.load(f)
+                    if 'active_config' in existing:
+                        data_to_save['active_config'] = existing['active_config']
+                except Exception:
+                    pass
             with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(self.settings, f, indent=4, ensure_ascii=False)
+                json.dump(data_to_save, f, indent=4, ensure_ascii=False)
             print(f"Configuration saved to {self.config_file}")
             return True
         except Exception as e:
@@ -135,35 +148,48 @@ class Config:
         """Resets settings to default values"""
         self.settings = self.defaults.copy()
     
-    def save_last_config_name(self):
-        """Saves current configuration file name as last used"""
+    def save_active_config_name(self):
+        """Saves active config file path into base config.json"""
         try:
-            last_config_path = os.path.join(dir_path, self.LAST_CONFIG_FILE)
-            with open(last_config_path, 'w') as f:
-                f.write(self.config_file)
+            base_config_path = os.path.join(dir_path, self.BASE_CONFIG_FILE)
+            base_data = {}
+            if os.path.exists(base_config_path):
+                try:
+                    with open(base_config_path, 'r', encoding='utf-8') as f:
+                        base_data = json.load(f)
+                except Exception:
+                    pass
+            if os.path.normcase(self.config_file) == os.path.normcase(base_config_path):
+                # Active config IS config.json - remove the key (no need to store it)
+                base_data.pop('active_config', None)
+            else:
+                base_data['active_config'] = self.config_file
+            with open(base_config_path, 'w', encoding='utf-8') as f:
+                json.dump(base_data, f, indent=4, ensure_ascii=False)
             return True
         except Exception as e:
-            print(f"Error saving last config name: {e}")
+            print(f"Error saving active config name: {e}")
             return False
     
     @staticmethod
-    def get_last_config_name():
-        """Reads last used configuration file name"""
+    def get_active_config_name():
+        """Reads active config file name from base config.json"""
         try:
-            last_config_path = os.path.join(dir_path, Config.LAST_CONFIG_FILE)
-            if os.path.exists(last_config_path):
-                with open(last_config_path, 'r') as f:
-                    config_file = os.path.join(dir_path, f.read().strip())
-                    if os.path.exists(config_file):
-                        return config_file
+            base_config_path = os.path.join(dir_path, Config.BASE_CONFIG_FILE)
+            if os.path.exists(base_config_path):
+                with open(base_config_path, 'r', encoding='utf-8') as f:
+                    base_data = json.load(f)
+                    active = base_data.get('active_config')
+                    if active and os.path.exists(active):
+                        return active
         except Exception as e:
-            print(f"Error reading last config name: {e}")
+            print(f"Error reading active config name: {e}")
         # If reading failed, return default file
-        return os.path.join(dir_path, 'config.json')
+        return os.path.join(dir_path, Config.BASE_CONFIG_FILE)
 
 # Global configuration instance
-last_config_file = Config.get_last_config_name()
-config = Config(last_config_file)
+active_config_file = Config.get_active_config_name()
+config = Config(active_config_file)
 
 ### --- Configuration (Legacy - for backward compatibility) --- ###
 # Connection
@@ -593,7 +619,7 @@ class SettingsDialog(QtWidgets.QDialog):
         layout_conn.addRow("Audio In (Mic):",    self.combo_audio_input)
         layout_conn.addRow("Audio Out (Speaker):", self.combo_audio_output)
 
-        audio_note = QtWidgets.QLabel("Zmiana urządzenia wymaga odłączenia i ponownego połączenia audio.")
+        audio_note = QtWidgets.QLabel("Audio device change requires disconnecting and reconnecting audio.")
         audio_note.setStyleSheet("color: gray; font-size: 9pt;")
         audio_note.setWordWrap(True)
         layout_conn.addRow("", audio_note)
@@ -789,8 +815,7 @@ class SettingsDialog(QtWidgets.QDialog):
         
         # Save to file
         if self.config.save():
-            # Save this file name as last used
-            self.config.save_last_config_name()
+            self.config.save_active_config_name()
             self.accept()
         else:
             QtWidgets.QMessageBox.warning(
@@ -830,8 +855,7 @@ class SettingsDialog(QtWidgets.QDialog):
             self.config = new_config
             self.temp_settings = self.config.settings.copy()
             
-            # Save this file name as last used
-            self.config.save_last_config_name()
+            self.config.save_active_config_name()
             
             # Update file name in UI
             self.config_file_label.setText(os.path.basename(file_path))
@@ -864,8 +888,7 @@ class SettingsDialog(QtWidgets.QDialog):
             if new_config.save():
                 # Switch to new file
                 self.config = new_config
-                # Save this file name as last used
-                self.config.save_last_config_name()
+                self.config.save_active_config_name()
                 self.config_file_label.setText(os.path.basename(file_path))
                 
                 QtWidgets.QMessageBox.information(
@@ -3226,7 +3249,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def disable_tx(self):
         cmd = f"T 0"
         self.client.send(cmd)
-        self.client.send(cmd)
+        self.tx_sent = 0
 
     def replace_s_meter_when_tx(self, tx_state):
         """Switches between S-METER (RX) and SWR (TX). ALC and POWER always visible."""
@@ -3253,9 +3276,11 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
             # Send disable tx with delay because of delay in mumble
-            QTimer.singleShot(TX_OFF_DELAY, self.disable_tx)
-            # self.disable_tx()
-            self.tx_sent = 0
+            if TX_OFF_DELAY:
+                QTimer.singleShot(TX_OFF_DELAY, self.disable_tx)
+            else:
+                self.disable_tx()
+                self.tx_sent = 0
 
     @QtCore.pyqtSlot(int)
     def fst_action(self, val: int):
