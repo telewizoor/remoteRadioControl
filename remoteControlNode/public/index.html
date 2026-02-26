@@ -44,6 +44,16 @@
         .filter-btn { flex: 1; padding: 10px; background: #666; border: 2px solid #555; border-radius: 4px; cursor: pointer; transition: all 0.2s; }
         .filter-btn.active { background: #4CAF50; border-color: #4CAF50; }
         input[type="number"] { width: 100%; padding: 10px; background: #333; border: 1px solid #555; border-radius: 4px; color: #fff; font-size: 16px; font-family: 'Courier New', monospace; }
+        .toggle-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+        .toggle-row label { color: #ffd700; font-size: 13px; font-weight: bold; min-width: 52px; }
+        .toggle-row input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; accent-color: #4CAF50; }
+        .dsp-slider-wrap { display: flex; align-items: center; gap: 8px; }
+        .dsp-slider-wrap input[type="range"] { flex: 1; height: 6px; border-radius: 3px; background: #666; outline: none; }
+        .dsp-slider-wrap .sv { color: #00ff00; font-weight: bold; min-width: 42px; text-align: right; font-size: 13px; }
+        .ant-btns { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+        .ant-btn { padding: 12px; border: 2px solid #555; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; background: #666; color: #fff; transition: all 0.2s; }
+        .ant-btn.active { background: #4CAF50; border-color: #4CAF50; }
+        .po-display { font-size: 28px; font-family: 'Courier New', monospace; font-weight: bold; color: #ffa500; text-align: center; margin-bottom: 8px; }
     </style>
 </head>
 <body>
@@ -148,6 +158,78 @@
             </div>
         </div>
 
+        <!-- DSP / Antenna / TX Power row -->
+        <div class="control-panel">
+
+            <!-- DSP -->
+            <div class="section">
+                <h2>DSP</h2>
+
+                <div class="toggle-row">
+                    <label>Shift</label>
+                    <span class="sv" id="shiftVal">0</span>
+                </div>
+                <div class="dsp-slider-wrap">
+                    <input type="range" id="shiftSlider" min="-1000" max="1000" value="0"
+                        oninput="onShiftInput(this.value)" onchange="setShift(this.value)">
+                </div>
+
+                <div style="margin-top:14px">
+                    <div class="toggle-row">
+                        <input type="checkbox" id="notchEn" onchange="setNotchEnable(this.checked)">
+                        <label for="notchEn">Notch</label>
+                        <span class="sv" id="notchVal">2000</span>
+                    </div>
+                    <div class="dsp-slider-wrap">
+                        <input type="range" id="notchSlider" min="0" max="4000" step="100" value="2000"
+                            oninput="document.getElementById('notchVal').textContent=this.value"
+                            onchange="setNotchFreq(this.value)">
+                    </div>
+                </div>
+
+                <div style="margin-top:14px">
+                    <div class="toggle-row">
+                        <input type="checkbox" id="nrEn" onchange="setNrEnable(this.checked)">
+                        <label for="nrEn">NR</label>
+                        <span class="sv" id="nrVal">5</span>
+                    </div>
+                    <div class="dsp-slider-wrap">
+                        <input type="range" id="nrSlider" min="1" max="11" step="1" value="5"
+                            oninput="document.getElementById('nrVal').textContent=this.value"
+                            onchange="setNrLevel(this.value)">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Antenna -->
+            <div class="section">
+                <h2>Antenna</h2>
+                <div class="ant-btns">
+                    <button class="ant-btn" id="ant1Btn" onclick="setAntenna(1)">Ant 1</button>
+                    <button class="ant-btn" id="ant2Btn" onclick="setAntenna(2)">Ant 2</button>
+                    <button class="ant-btn" id="ant3Btn" onclick="setAntenna(3)">Ant 3</button>
+                </div>
+            </div>
+
+            <!-- TX Power -->
+            <div class="section">
+                <h2>TX Power</h2>
+                <div class="po-display" id="poDisplay">-- W%</div>
+                <div class="meter" style="margin-bottom:16px">
+                    <div class="meter-bar">
+                        <div class="meter-fill" id="poMeter" style="width:0%">0%</div>
+                    </div>
+                </div>
+                <div class="slider-group">
+                    <label>Power <span class="slider-value" id="txPwrVal">50</span>%</label>
+                    <input type="range" id="txPwrSlider" min="0" max="100" value="50"
+                        onchange="setTxPower(this.value)"
+                        oninput="document.getElementById('txPwrVal').textContent=this.value">
+                </div>
+            </div>
+
+        </div>
+
         <div class="status-bar">
             <span class="vfo-indicator" id="vfoIndicator">VFO A</span>
             <span id="statusMsg">Connecting...</span>
@@ -223,6 +305,50 @@
             if (preamp !== null) document.getElementById('ipoBtn').classList.toggle('btn-active', preamp.value > 0);
 
             updateStatus('Connected', false);
+
+            // DSP
+            const [shiftR, notchEnR, notchFR, nrEnR, nrLvlR] = await Promise.all([
+                apiCall('/level/IF'), apiCall('/func/MN'), apiCall('/level/NOTCHF'),
+                apiCall('/func/NR'), apiCall('/level/NR')
+            ]);
+            if (shiftR && shiftR.value !== undefined) {
+                const v = Math.round(shiftR.value);
+                if (document.activeElement !== document.getElementById('shiftSlider'))
+                    document.getElementById('shiftSlider').value = v;
+                document.getElementById('shiftVal').textContent = v;
+            }
+            if (notchEnR !== null) document.getElementById('notchEn').checked = notchEnR.value === 1;
+            if (notchFR && notchFR.value !== undefined) {
+                const v = Math.round(notchFR.value);
+                if (document.activeElement !== document.getElementById('notchSlider'))
+                    document.getElementById('notchSlider').value = v;
+                document.getElementById('notchVal').textContent = v;
+            }
+            if (nrEnR !== null) document.getElementById('nrEn').checked = nrEnR.value === 1;
+            if (nrLvlR && nrLvlR.value !== undefined) {
+                const v = Math.round(nrLvlR.value * 10);
+                if (document.activeElement !== document.getElementById('nrSlider'))
+                    document.getElementById('nrSlider').value = Math.max(1, Math.min(11, v || 1));
+                document.getElementById('nrVal').textContent = document.getElementById('nrSlider').value;
+            }
+
+            // Antenna
+            try {
+                const antR = await apiCall('/antenna');
+                if (antR && antR.antenna) updateAntennaDisplay(antR.antenna);
+            } catch(e) {}
+
+            // TX Power meter
+            const rfpow = await apiCall('/level/RFPOWER_METER');
+            if (rfpow && rfpow.value !== undefined) updatePoMeter(rfpow.value);
+            // TX Power set slider (read configured power)
+            const rfpowSet = await apiCall('/level/RFPOWER');
+            if (rfpowSet && rfpowSet.value !== undefined) {
+                const pct = Math.round(rfpowSet.value * 100);
+                if (document.activeElement !== document.getElementById('txPwrSlider'))
+                    document.getElementById('txPwrSlider').value = pct;
+                document.getElementById('txPwrVal').textContent = pct;
+            }
         }
 
         function updateFrequencyDisplay() {
@@ -281,6 +407,61 @@
             await apiCall('/powerstat', 'POST', { state: newState });
             setTimeout(updateAllStatus, newState ? 3000 : 500);
         }
+
+        // ── DSP ──────────────────────────────────────────────────
+        function onShiftInput(val) {
+            val = parseInt(val);
+            if (Math.abs(val) <= 200) {
+                val = 0;
+                document.getElementById('shiftSlider').value = 0;
+            }
+            document.getElementById('shiftVal').textContent = val;
+        }
+        async function setShift(val) {
+            val = parseInt(val);
+            if (Math.abs(val) <= 200) { val = 0; document.getElementById('shiftSlider').value = 0; }
+            document.getElementById('shiftVal').textContent = val;
+            await apiCall('/level/IF', 'POST', { value: val });
+        }
+        async function setNotchEnable(enabled) {
+            await apiCall('/func/MN', 'POST', { value: enabled ? 1 : 0 });
+        }
+        async function setNotchFreq(val) {
+            await apiCall('/level/NOTCHF', 'POST', { value: parseInt(val) });
+        }
+        async function setNrEnable(enabled) {
+            await apiCall('/func/NR', 'POST', { value: enabled ? 1 : 0 });
+        }
+        async function setNrLevel(val) {
+            await apiCall('/level/NR', 'POST', { value: parseInt(val) / 10 });
+        }
+        // ─────────────────────────────────────────────────────────
+
+        // ── Antenna ──────────────────────────────────────────────
+        let currentAntenna = null;
+        function updateAntennaDisplay(ant) {
+            currentAntenna = ant;
+            [1, 2, 3].forEach(i => {
+                document.getElementById('ant' + i + 'Btn').classList.toggle('active', String(ant) === String(i));
+            });
+        }
+        async function setAntenna(num) {
+            await apiCall('/antenna', 'POST', { antenna: num });
+            updateAntennaDisplay(num);
+        }
+        // ─────────────────────────────────────────────────────────
+
+        // ── TX Power ─────────────────────────────────────────────
+        function updatePoMeter(val) {
+            const pct = Math.round(val * 100);
+            document.getElementById('poMeter').style.width = pct + '%';
+            document.getElementById('poMeter').textContent = pct + '%';
+            document.getElementById('poDisplay').textContent = pct + ' W%';
+        }
+        async function setTxPower(val) {
+            await apiCall('/level/RFPOWER', 'POST', { value: parseInt(val) / 100 });
+        }
+        // ─────────────────────────────────────────────────────────
 
         async function frequencyStep(step) { currentFreq += step; await setFrequency(currentFreq); }
 

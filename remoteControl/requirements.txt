@@ -5,3 +5,5 @@ soundfile
 websocket
 websocket-client
 numpy
+websockets
+Cython

@@ -11,6 +11,8 @@ const RIGCTLD_HOST = '0.0.0.0';
 const RIGCTLD_PORT = 4532;
 const WEB_PORT = 443;
 const TCP_TIMEOUT = 1000;
+const ANTENNA_SWITCH_HOST = '127.0.0.1';
+const ANTENNA_SWITCH_PORT = 5000;
 
 // Python WebRTC serwer (lokalnie na RPi)
 const PYTHON_SERVER = 'https://127.0.0.1:8443';
@@ -218,6 +220,37 @@ app.get('/api/tx', async (req, res) => {
         res.json({ tx: match ? parseInt(match[1]) : 0 });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ── Antenna switch ──────────────────────────────────────────
+function sendAntennaCommand(cmd) {
+    return new Promise((resolve, reject) => {
+        const client = new net.Socket();
+        let data = '';
+        client.setTimeout(1000);
+        client.connect(ANTENNA_SWITCH_PORT, ANTENNA_SWITCH_HOST, () => {
+            client.write(cmd);
+        });
+        client.on('data', (chunk) => { data += chunk.toString(); client.destroy(); });
+        client.on('close', () => resolve(data.trim()));
+        client.on('error', (err) => { client.destroy(); reject(err); });
+        client.on('timeout', () => { client.destroy(); reject(new Error('Timeout')); });
+    });
+}
+
+app.get('/api/antenna', async (req, res) => {
+    try {
+        const result = await sendAntennaCommand('get');
+        res.json({ antenna: result.trim() });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/antenna', async (req, res) => {
+    try {
+        const result = await sendAntennaCommand(String(req.body.antenna));
+        res.json({ success: true, response: result });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// ────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));

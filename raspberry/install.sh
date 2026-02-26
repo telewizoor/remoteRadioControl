@@ -6,7 +6,7 @@ sudo wget -O /etc/apt/trusted.gpg.d/sonobus.gpg https://pkg.sonobus.net/apt/keyr
 sudo apt update && sudo apt install sonobus
 
 # Node for www
-sudo apt-get install nodejs npm
+sudo apt-get install nodejs npm ffmpeg
 
 # Directory for software
 cd ~

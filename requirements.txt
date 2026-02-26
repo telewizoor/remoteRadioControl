@@ -1,4 +1,4 @@
-av
+av>=10
 numpy
 sounddevice
 aiohttp
