@@ -24,7 +24,7 @@
         .btn-power { background: #60fa60; color: #000; }
         .btn-power.off { background: #fa6060; }
         .btn-active { background: #4CAF50; color: #fff; }
-        .btn-ptt { background: #d3d3d3; grid-column: span 3; padding: 20px; font-size: 18px; }
+        .btn-ptt { background: #776449; grid-column: span 3; padding: 20px; font-size: 18px; }
         .btn-ptt.active { background: #4CAF50; }
         .mode-buttons { display: flex; flex-direction: column; gap: 8px; }
         .mode-btn { padding: 10px; background: #333; border: 1px solid #555; border-radius: 4px; color: #ccc; cursor: pointer; transition: all 0.2s; text-align: center; font-weight: bold; }
@@ -344,8 +344,6 @@
         // ── WebRTC Audio ──────────────────────────────────────────
         let pc = null;
         let localStream = null;
-        let audioCtx = null;
-        let gainNode = null;
 
         async function toggleAudio() {
             if (pc) { disconnectAudio(); } else { await connectAudio(); }
@@ -354,34 +352,63 @@
         async function connectAudio() {
             const btn = document.getElementById('audioBtn');
             const status = document.getElementById('audioStatus');
+            const audioEl = document.getElementById('radioAudio');
+
+            // iOS Safari: play() MUSI być wywołane SYNCHRONICZNIE podczas gestu
+            audioEl.muted = true;
+            audioEl.play().catch(() => {});
+
             btn.textContent = '⏳ Connecting...';
             btn.disabled = true;
             status.textContent = 'Connecting...';
             status.style.color = '#ffd700';
 
             try {
-                pc = new RTCPeerConnection({ iceServers: [] });
+                pc = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                    ]
+                });
                 pc.addTransceiver('audio', { direction: 'recvonly' });
 
-                localStream = await navigator.mediaDevices.getUserMedia({
-                    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-                });
-                localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+                // Mikrofon — exact:false wymagane przez iOS Safari żeby faktycznie wyłączyć
+                // przetwarzanie (zwykłe false jest ignorowane)
+                try {
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: { exact: false },
+                            noiseSuppression: { exact: false },
+                            autoGainControl:  { exact: false },
+                        }
+                    });
+                    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+                } catch (micErr) {
+                    // exact:false może być odrzucone jeśli iOS nie potrafi spełnić —
+                    // fallback do prostej prośby bez ograniczeń
+                    console.warn('Mic exact constraints failed, retrying plain:', micErr.message);
+                    try {
+                        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+                    } catch (micErr2) {
+                        console.warn('Mikrofon niedostępny:', micErr2.message);
+                    }
+                }
 
                 pc.ontrack = (evt) => {
-                    audioCtx = new AudioContext();
-                    gainNode = audioCtx.createGain();
-                    gainNode.gain.value = 1;
-                    audioCtx.createMediaStreamSource(evt.streams[0]).connect(gainNode);
-                    gainNode.connect(audioCtx.destination);
-                    const audioEl = document.getElementById('radioAudio');
                     audioEl.srcObject = evt.streams[0];
-                    audioEl.play().catch(() => {});
-                    audioCtx.resume();
+                    audioEl.muted = false;
+                    audioEl.play().catch(e => console.warn('play error:', e));
+                };
+
+                pc.oniceconnectionstatechange = () => {
+                    console.log('ICE:', pc.iceConnectionState);
+                    status.textContent = 'ICE: ' + pc.iceConnectionState;
                 };
 
                 pc.onconnectionstatechange = () => {
                     const s = pc.connectionState;
+                    console.log('Connection:', s);
                     status.textContent = s;
                     if (s === 'connected') {
                         status.style.color = '#4CAF50';
@@ -389,7 +416,9 @@
                         btn.disabled = false;
                         btn.classList.add('off');
                     } else if (s === 'failed' || s === 'disconnected' || s === 'closed') {
-                        disconnectAudio();
+                        status.style.color = '#ff6b6b';
+                        status.textContent = 'Failed (' + s + ') – check console';
+                        setTimeout(disconnectAudio, 2000);
                     }
                 };
 
@@ -420,15 +449,16 @@
 
         function disconnectAudio() {
             if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-            if (audioCtx) { audioCtx.close(); audioCtx = null; }
             if (pc) { pc.close(); pc = null; }
+            const audioEl = document.getElementById('radioAudio');
+            audioEl.srcObject = null;
+            audioEl.muted = true;
             const btn = document.getElementById('audioBtn');
             btn.textContent = '▶ Connect Audio';
             btn.disabled = false;
             btn.classList.remove('off');
             document.getElementById('audioStatus').textContent = 'Disconnected';
             document.getElementById('audioStatus').style.color = '#888';
-            document.getElementById('radioAudio').srcObject = null;
         }
         // ─────────────────────────────────────────────────────────
 

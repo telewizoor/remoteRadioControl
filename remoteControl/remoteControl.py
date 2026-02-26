@@ -4,16 +4,18 @@ import sys
 import socket
 import re
 import threading
+import asyncio
+import os 
+import numpy as np
+import websocket
+import json
+
 from soundPlayer import playSound, stopSound
+from audioClient import RadioPlayer as audioClientRadioPlayer, MicTrack as audioClientMicTrack, run as audioClientRun
 from pynput import keyboard
 from PyQt5.QtCore import QTimer
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtGui import QIcon
-import os 
-
-import numpy as np
-import websocket
-import json
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -88,6 +90,10 @@ class Config:
             
             # Interface
             'stay_on_top': False,
+
+            # Audio
+            'audio_input_device': None,
+            'audio_output_device': None,
         }
     
     def load(self):
@@ -191,6 +197,9 @@ ROUND_BUTTON_SIZE = 40
 
 SMALL_BTN_WIDTH  = 56
 SMALL_BTN_HEIGHT = 28
+
+NORMAL_BTN_WIDTH  = 76
+NORMAL_BTN_HEIGHT = 28
 
 BIG_KNOB_SIZE   = 50
 SMALL_KNOB_SIZE = 40
@@ -555,10 +564,43 @@ class SettingsDialog(QtWidgets.QDialog):
         layout_conn.addRow("Host IP:", self.edit_host)
         layout_conn.addRow("Rigctl Port:", self.edit_port)
         layout_conn.addRow("Poll Interval:", self.edit_poll_ms)
-        
+
+        layout_conn.addRow("", QtWidgets.QLabel(""))  # Separator
+
+        audio_in_items  = [("Default (system)", None)]
+        audio_out_items = [("Default (system)", None)]
+        try:
+            import sounddevice as _sd
+            for i, d in enumerate(_sd.query_devices()):
+                label = f"[{i}] {d['name']}"
+                if d['max_input_channels'] > 0:
+                    audio_in_items.append((label, i))
+                if d['max_output_channels'] > 0:
+                    audio_out_items.append((label, i))
+        except Exception:
+            pass
+
+        self.combo_audio_input  = QtWidgets.QComboBox()
+        self.combo_audio_output = QtWidgets.QComboBox()
+        for label, idx in audio_in_items:
+            self.combo_audio_input.addItem(label, idx)
+        for label, idx in audio_out_items:
+            self.combo_audio_output.addItem(label, idx)
+
+        self._select_audio_combo(self.combo_audio_input,  self.temp_settings.get('audio_input_device'))
+        self._select_audio_combo(self.combo_audio_output, self.temp_settings.get('audio_output_device'))
+
+        layout_conn.addRow("Audio In (Mic):",    self.combo_audio_input)
+        layout_conn.addRow("Audio Out (Speaker):", self.combo_audio_output)
+
+        audio_note = QtWidgets.QLabel("Zmiana urządzenia wymaga odłączenia i ponownego połączenia audio.")
+        audio_note.setStyleSheet("color: gray; font-size: 9pt;")
+        audio_note.setWordWrap(True)
+        layout_conn.addRow("", audio_note)
+
         tab_connection.setLayout(layout_conn)
         self.tabs.addTab(tab_connection, "Connection")
-        
+
         # --- Tab: Radio Settings ---
         tab_radio = QtWidgets.QWidget()
         layout_radio = QtWidgets.QFormLayout()
@@ -873,7 +915,11 @@ class SettingsDialog(QtWidgets.QDialog):
         
         # Interface
         self.temp_settings['stay_on_top'] = self.check_stay_on_top.isChecked()
-    
+
+        # Audio
+        self.temp_settings['audio_input_device']  = self.combo_audio_input.currentData()
+        self.temp_settings['audio_output_device'] = self.combo_audio_output.currentData()
+
     def refresh_all_fields(self):
         """Refreshes all fields in dialog"""
         # Connection
@@ -909,6 +955,18 @@ class SettingsDialog(QtWidgets.QDialog):
         
         # Interface
         self.check_stay_on_top.setChecked(self.temp_settings.get('stay_on_top', False))
+
+        # Audio
+        self._select_audio_combo(self.combo_audio_input,  self.temp_settings.get('audio_input_device'))
+        self._select_audio_combo(self.combo_audio_output, self.temp_settings.get('audio_output_device'))
+
+    def _select_audio_combo(self, combo, device_value):
+        """Selects combo item matching device index/None."""
+        for i in range(combo.count()):
+            if combo.itemData(i) == device_value:
+                combo.setCurrentIndex(i)
+                return
+        combo.setCurrentIndex(0)  # fallback: Default
 
 
 class PollWorker(QtCore.QObject):
@@ -1573,6 +1631,8 @@ class WsReceiver(threading.Thread, QtCore.QObject):
         COMPRESS_FFT_PAD_N = 14
 
         def on_message(ws, message):
+            if self._stop_event.is_set():
+                return
             if isinstance(message, str):
                 try:
                     json_msg = json.loads(message)
@@ -1610,10 +1670,12 @@ class WsReceiver(threading.Thread, QtCore.QObject):
                 waterfall_f32 = []
                 for i in range(len(waterfall_i16) - COMPRESS_FFT_PAD_N):
                     waterfall_f32.append(waterfall_i16[i + COMPRESS_FFT_PAD_N] / 100.0)
-                self.push_row_signal.emit(np.array(waterfall_f32, dtype=np.float32))
+                if not self._stop_event.is_set():
+                    self.push_row_signal.emit(np.array(waterfall_f32, dtype=np.float32))
 
         def on_error(ws, error):
-            print("WS error:", error)
+            if not self._stop_event.is_set():
+                print("WS error:", error)
 
         def on_close(ws, code, msg):
             print("WS closed", code, msg)
@@ -1635,7 +1697,13 @@ class WsReceiver(threading.Thread, QtCore.QObject):
                 import time
                 time.sleep(1)
 
+class AudioStateSignaler(QtCore.QObject):
+    """Helper do przekazywania stanu audio z wątku do Qt UI."""
+    status_changed = QtCore.pyqtSignal(str)
+
+
 class MainWindow(QtWidgets.QMainWindow):
+    audio_status_changed = QtCore.pyqtSignal(str)
     send_tx_signal = QtCore.pyqtSignal(int)
     send_fst_signal = QtCore.pyqtSignal(int)
     pause_polling = QtCore.pyqtSignal(int)
@@ -1672,6 +1740,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tx_active = 0
         self.tx_sent = 0
+        self._audio_thread = None
+        self._audio_stop_event = None
 
         self.filter_width = FILTER_WIDTH_USB_NORMAL
         self.current_freq = 14074000  # Hz (read from rigctld)
@@ -2204,12 +2274,33 @@ class MainWindow(QtWidgets.QMainWindow):
             top_row.addWidget(self.player_group)
         top_row.addStretch()
         
-        # Settings button - last in top_row
+        # Settings + Audio buttons stacked vertically
+        right_btns_col = QtWidgets.QVBoxLayout()
+        right_btns_col.setSpacing(2)
+
         self.settings_btn = QtWidgets.QPushButton("Settings")
-        self.settings_btn.setFixedSize(SMALL_BTN_WIDTH + 10, SMALL_BTN_HEIGHT)
-        self.settings_btn.setStyleSheet("background-color: " + "#d0d0d0" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.settings_btn.setFixedSize(NORMAL_BTN_WIDTH, NORMAL_BTN_HEIGHT)
+        self.settings_btn.setStyleSheet("background-color: #d0d0d0; text-align: center; border-radius: 4px; border: 1px solid black;")
         self.settings_btn.clicked.connect(self.open_settings)
-        top_row.addWidget(self.settings_btn)
+
+        self.audio_btn = QtWidgets.QPushButton("▶ Audio")
+        self.audio_btn.setFixedSize(NORMAL_BTN_WIDTH, NORMAL_BTN_HEIGHT)
+        self.audio_btn.setStyleSheet("background-color: #d0d0d0; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.audio_btn.clicked.connect(self.toggle_audio_client)
+        self.audio_status_label = QtWidgets.QLabel("disconnected")
+        self.audio_status_label.setStyleSheet("color: gray; font-size: 8pt;")
+        self.audio_status_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.audio_status_label.setFixedWidth(NORMAL_BTN_WIDTH)
+        
+        right_btns_col.addStretch()
+        right_btns_col.addWidget(self.settings_btn)
+        right_btns_col.addStretch()
+        right_btns_col.addWidget(self.audio_btn)
+        right_btns_col.addWidget(self.audio_status_label)
+        right_btns_col.addStretch()
+        self.audio_status_changed.connect(self.on_audio_status)
+        top_row.addLayout(right_btns_col)
+        top_row.addStretch()
 
         self.smeter_row = QtWidgets.QHBoxLayout()
         self.smeter_row.addWidget(self.s_meter)
@@ -2263,7 +2354,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if WATERFALL_ENABLED:
             self.root.addWidget(self.waterfall_widget)
             self.root.addLayout(controls)
-        self.root.addStretch(0)
+        self.root.addStretch()
 
         self.status = self.statusBar()
         self.status.setVisible(False)
@@ -3229,6 +3320,49 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Settings Applied",
                 "Some settings have been applied.\nRestart the application for all changes to take effect."
             )
+
+    def toggle_audio_client(self):
+        """Starts or stops audio client."""
+        if self._audio_thread is not None and self._audio_thread.is_alive():
+            # Zatrzymaj
+            self._audio_stop_event.set()
+            self._audio_thread = None
+            self.audio_btn.setText("▶ Audio")
+            self.audio_status_label.setText("disconnected")
+            self.audio_status_label.setStyleSheet("color: gray; font-size: 8pt;")
+        else:
+            # Uruchom
+            self._audio_stop_event = threading.Event()
+            input_dev  = config.get('audio_input_device')
+            output_dev = config.get('audio_output_device')
+            server     = f"https://{config.get('host')}:8443"
+            t = threading.Thread(
+                target=start_audio,
+                args=(input_dev, output_dev, self.audio_status_changed.emit, self._audio_stop_event, server),
+                daemon=True
+            )
+            self._audio_thread = t
+            t.start()
+            self.on_audio_status("connecting")
+
+    @QtCore.pyqtSlot(str)
+    def on_audio_status(self, status):
+        """Thread-safe audio status update."""
+        status_map = {
+            'connecting':   ('connecting...', '#aa8800', '▶ Audio'),
+            'new':          ('connecting...', '#aa8800', '▶ Audio'),
+            'checking':     ('checking...',   '#aa8800', '▶ Audio'),
+            'connected':    ('connected',     '#4CAF50', '■ Audio'),
+            'failed':       ('failed',        '#cc3333', '▶ Audio'),
+            'disconnected': ('disconnected',  'gray',    '▶ Audio'),
+            'closed':       ('disconnected',  'gray',    '▶ Audio'),
+        }
+        text, color, btn_text = status_map.get(status, (status, 'gray', '▶ Audio'))
+        self.audio_status_label.setText(text)
+        self.audio_status_label.setStyleSheet(f"color: {color}; font-size: 8pt;")
+        self.audio_btn.setText(btn_text)
+        if status in ('failed', 'disconnected', 'closed'):
+            self._audio_thread = None
     
     def update_from_config(self):
         """Updates UI elements from current configuration (without restart)"""
@@ -3363,6 +3497,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.adjust_waterfall_colors.emit()
 
     def closeEvent(self, event):
+        if WATERFALL_ENABLED and hasattr(self, 'ws_thread'):
+            self.ws_thread.stop()
+        if self._audio_stop_event is not None:
+            self._audio_stop_event.set()
+        if self._audio_thread is not None and self._audio_thread.is_alive():
+            self._audio_thread.join(timeout=3)
         self.thread.quit()
         self.thread.wait(1000)
         super().closeEvent(event)
@@ -3441,6 +3581,20 @@ def start_keyboard_listener(main_window):
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
     listener.join()
+
+def start_audio(input_device=None, output_device=None, status_callback=None, stop_event=None, server_url=None):
+    try:
+        asyncio.run(audioClientRun(
+            input_device=input_device,
+            output_device=output_device,
+            status_callback=status_callback,
+            stop_event=stop_event,
+            server_url=server_url,
+        ))
+    except Exception as e:
+        print(f"Audio client error: {e}")
+        if status_callback:
+            status_callback("failed")
 
 def main():
     app = QtWidgets.QApplication(sys.argv)

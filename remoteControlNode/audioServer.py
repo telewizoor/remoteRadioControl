@@ -42,6 +42,14 @@ _playback_q    = queue.Queue(maxsize=100)
 _audio_stream  = None
 
 
+def _safe_async_put(aq, block):
+    """Wywoływane w event loop przez call_soon_threadsafe — łapie QueueFull."""
+    try:
+        aq.put_nowait(block)
+    except asyncio.QueueFull:
+        pass
+
+
 def _audio_callback(indata, outdata, frames, time_info, status):
     if status:
         log.warning("audio: %s", status)
@@ -49,11 +57,11 @@ def _audio_callback(indata, outdata, frames, time_info, status):
     # Broadcast capture do wszystkich aktywnych połączeń
     block = indata[:, 0].copy()
     with _lock:
-        for q in _capture_subs:
+        for (loop, aq) in _capture_subs:
             try:
-                q.put_nowait(block)
-            except queue.Full:
-                pass  # to połączenie nie nadąża — pomijamy
+                loop.call_soon_threadsafe(_safe_async_put, aq, block)
+            except Exception:
+                pass
 
     # Playback
     try:
@@ -100,23 +108,24 @@ class RadioTrack(MediaStreamTrack):
 
     def __init__(self):
         super().__init__()
-        self._q         = queue.Queue(maxsize=50)
+        self._loop      = asyncio.get_event_loop()
+        self._async_q   = asyncio.Queue(maxsize=50)
         self._pts       = 0
         self._time_base = fractions.Fraction(1, SAMPLE_RATE)
         self._cnt       = 0
-        # Zarejestruj własną kolejkę w broadcast liście
+        # Zarejestruj w loop+queue w broadcast liście
         with _lock:
-            _capture_subs.append(self._q)
+            _capture_subs.append((self._loop, self._async_q))
         log.info("RadioTrack: zarejestrowano (aktywne: %d)", len(_capture_subs))
 
     async def recv(self):
-        loop = asyncio.get_event_loop()
-        samples = await loop.run_in_executor(None, self._q.get)
+        # Czyste await na asyncio.Queue — żadnych wątków executor, możliwe do anulowania
+        samples = await self._async_q.get()
 
         self._cnt += 1
         if self._cnt % 200 == 1:
             log.info("TX #%d peak=%d qsize=%d", self._cnt,
-                     int(np.max(np.abs(samples))), self._q.qsize())
+                     int(np.max(np.abs(samples))), self._async_q.qsize())
 
         frame = av.AudioFrame.from_ndarray(samples.reshape(1, -1), format="s16", layout="mono")
         frame.sample_rate = SAMPLE_RATE
@@ -127,10 +136,10 @@ class RadioTrack(MediaStreamTrack):
 
     def stop(self):
         super().stop()
-        # Wyrejestruj kolejkę z broadcast listy
+        # Wyrejestruj z broadcast listy
         with _lock:
             try:
-                _capture_subs.remove(self._q)
+                _capture_subs.remove((self._loop, self._async_q))
             except ValueError:
                 pass
         log.info("RadioTrack: wyrejestrowano (aktywne: %d)", len(_capture_subs))
@@ -150,22 +159,19 @@ class MicSink:
         asyncio.ensure_future(self._run(track))
 
     async def _run(self, track):
-        loop = asyncio.get_event_loop()
         cnt = 0
         while self._active:
             try:
                 frame = await track.recv()
                 cnt += 1
 
-                def process(f):
-                    for of in self._resampler.resample(f):
-                        samples = np.frombuffer(bytes(of.planes[0]), dtype=np.float32).copy()
-                        try:
-                            _playback_q.put_nowait(samples)
-                        except queue.Full:
-                            pass
-
-                await loop.run_in_executor(None, process, frame)
+                # Resample synchronicznie — szybkie, nie blokuje długo, bez executor
+                for of in self._resampler.resample(frame):
+                    samples = np.frombuffer(bytes(of.planes[0]), dtype=np.float32).copy()
+                    try:
+                        _playback_q.put_nowait(samples)
+                    except queue.Full:
+                        pass
 
                 if cnt % 200 == 1:
                     log.info("RX mic #%d rate=%d fmt=%s samples=%d pq=%d",
@@ -190,6 +196,12 @@ class MicSink:
 async def offer(request):
     params    = await request.json()
     offer_sdp = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+
+    # Zamknij wszystkie poprzednie połączenia — tylko jedno aktywne naraz
+    for old_pc in list(pcs):
+        log.info("Zamykam stare połączenie przed nowym")
+        await old_pc.close()
+    pcs.clear()
 
     pc = RTCPeerConnection()
     pcs.add(pc)
@@ -237,7 +249,24 @@ async def offer(request):
     log.info("SDP offer:\n%s", answer.sdp)
 
     await pc.setLocalDescription(answer)
-    await asyncio.sleep(0.5)
+
+    # Czekaj na pełne zebranie kandydatów ICE (ważne dla ZeroTier / niestandardowych interfejsów)
+    if pc.iceGatheringState != "complete":
+        gather_done = asyncio.Event()
+
+        @pc.on("icegatheringstatechange")
+        def on_gather():
+            log.info("ICE gathering: %s", pc.iceGatheringState)
+            if pc.iceGatheringState == "complete":
+                gather_done.set()
+
+        try:
+            await asyncio.wait_for(gather_done.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            log.warning("ICE gathering timeout – wysyłam co jest")
+
+    log.info("ICE candidates w odpowiedzi:\n%s",
+             "\n".join(l for l in pc.localDescription.sdp.split("\n") if "candidate" in l))
 
     log.info("SENDERS: %s", pc.getSenders())
     log.info("RECEIVERS: %s", pc.getReceivers())

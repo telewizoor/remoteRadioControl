@@ -31,7 +31,6 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("client")
 
 SERVER     = "https://192.168.152.12:8443"
-# sounddevice domyślnie 48kHz na Windows — Opus ogarnie
 SD_RATE    = 48000
 SAMPLE_TIME = 20
 BLOCK_SIZE  = SD_RATE * SAMPLE_TIME // 1000  # 960 próbki = 20ms
@@ -44,25 +43,13 @@ class RadioPlayer:
 
     def __init__(self, device):
         self._device    = device
-        self._async_q   = None
         self._sync_q    = queue.Queue(maxsize=3)
         self._resampler = av.AudioResampler(format="s16", layout="mono", rate=SD_RATE)
 
     def start(self, loop):
-        self._async_q = asyncio.Queue(maxsize=3)
-        # drainuj async → sync queue
-        asyncio.ensure_future(self._drain())
         # uruchom sounddevice w osobnym wątku
         t = threading.Thread(target=self._sd_thread, daemon=True)
         t.start()
-
-    async def _drain(self):
-        while True:
-            chunk = await self._async_q.get()
-            try:
-                self._sync_q.put_nowait(chunk)
-            except queue.Full:
-                pass
 
     def _sd_thread(self):
         silence = np.zeros(BLOCK_SIZE, dtype=np.float32)
@@ -104,7 +91,10 @@ class RadioPlayer:
                 for f in self._resampler.resample(frame):
                     raw = np.frombuffer(bytes(f.planes[0]), dtype=np.int16)
                     samples = raw.astype(np.float32) / 32768.0
-                    await self._async_q.put(samples)
+                    try:
+                        self._sync_q.put_nowait(samples)
+                    except queue.Full:
+                        pass
 
                 # if cnt % 200 == 1:
                 #     log.info("RX radio #%d rate=%d layout=%s", cnt, frame.sample_rate, frame.layout.name)
@@ -172,8 +162,12 @@ class MicTrack(MediaStreamTrack):
 # MAIN
 # ─────────────────────────────────────────────────────────────
 
-async def run(input_device, output_device):
+async def run(input_device, output_device, status_callback=None, stop_event=None, server_url=None):
     loop = asyncio.get_event_loop()
+    target_server = server_url or SERVER
+
+    if status_callback:
+        status_callback("connecting")
 
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.check_hostname = False
@@ -197,31 +191,14 @@ async def run(input_device, output_device):
     @pc.on("connectionstatechange")
     async def on_conn():
         log.info("connectionState: %s", pc.connectionState)
+        if status_callback:
+            status_callback(pc.connectionState)
 
     @pc.on("iceconnectionstatechange")
     async def on_ice():
         log.info("ICE: %s", pc.iceConnectionState)
 
     offer = await pc.createOffer()
-
-    # offer.sdp = offer.sdp.replace(
-    #     "a=rtpmap:96 opus/48000/2",
-    #     "a=rtpmap:96 opus/48000/2\r\n"
-    #     "a=fmtp:96 stereo=0;"
-    #     # "sprop-stereo=0;"
-    #     "maxaveragebitrate=16000;"
-    #     "maxplaybackrate=16000;"
-    #     "sprop-maxcapturerate=16000;"
-    #     # "ptime=20;"
-    #     # "minptime=20;"
-    #     "useinbandfec=0;"
-    #     "usedtx=1"
-    # ) # maxplaybackrate=16000; sprop-maxcapturerate=16000; maxaveragebitrate=20000; stereo=1; useinbandfec=1; usedtx=0
-
-    # offer.sdp = offer.sdp.replace(
-    #     "m=audio 9 UDP/TLS/RTP/SAVPF 96 9 0 8",
-    #     "m=audio 9 UDP/TLS/RTP/SAVPF 8"
-    # )
 
     await pc.setLocalDescription(offer)
     log.info("SDP offer:\n%s", offer.sdp)
@@ -231,20 +208,26 @@ async def run(input_device, output_device):
             break
         await asyncio.sleep(0.1)
 
-    log.info("Wysyłam offer → %s", SERVER)
+    log.info("Wysyłam offer → %s", target_server)
 
     asyncio.create_task(monitor(pc))
 
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_ctx)) as session:
         async with session.post(
-            f"{SERVER}/offer",
+            f"{target_server}/offer",
             json={"sdp": pc.localDescription.sdp, "type": pc.localDescription.type},
         ) as resp:
             data = await resp.json()
 
     await pc.setRemoteDescription(RTCSessionDescription(sdp=data["sdp"], type=data["type"]))
     log.info("Połączono! Ctrl+C żeby zatrzymać.")
-    await asyncio.Event().wait()
+
+    if stop_event is not None:
+        # Czekaj aż stop_event zostanie ustawiony (threading.Event)
+        await loop.run_in_executor(None, stop_event.wait)
+        await pc.close()
+    else:
+        await asyncio.Event().wait()
 
 async def monitor(pc):
     prev = 0
