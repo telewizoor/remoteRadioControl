@@ -38,7 +38,7 @@ BLOCK_SIZE  = SD_RATE * SAMPLE_TIME // 1000   # 960 próbek = 20 ms
 
 # Rozmiar kolejki odbioru: ~300 ms bufora jitter. Przy maxsize=3 (60 ms) każde
 # chwilowe opóźnienie sieci powoduje underrun → skok do zera → trzask.
-RX_QUEUE_SIZE = 3
+RX_QUEUE_SIZE = 5
 
 # Ile próbek wstępnie buforować zanim zacznie wychodzić dźwięk (2 bloki = 40 ms).
 RX_PREFILL = 2
