@@ -1,9 +1,11 @@
 // server.js
-const express = require('express');
-const net = require('net');
-const path = require('path');
-const https = require('https');
-const fs = require('fs');
+const express  = require('express');
+const net      = require('net');
+const path     = require('path');
+const https    = require('https');
+const fs       = require('fs');
+const WebSocket = require('ws');
+const { spawn } = require('child_process');
 const app = express();
 
 // Konfiguracja
@@ -14,54 +16,17 @@ const TCP_TIMEOUT = 1000;
 const ANTENNA_SWITCH_HOST = '0.0.0.0';
 const ANTENNA_SWITCH_PORT = 5000;
 
-// Python WebRTC serwer (lokalnie na RPi)
-const PYTHON_SERVER = 'https://127.0.0.1:8443';
+// ── Audio bridge config ───────────────────────────────────────────
+// Set AUDIO_DEVICE env var to override, e.g. AUDIO_DEVICE=hw:CARD=Device,DEV=0
+const AUDIO_DEVICE  = process.env.AUDIO_DEVICE || 'hw:CARD=Device,DEV=0';
+const AUDIO_RATE    = 48000;
+const FRAME_SAMPLES = 960;          // 20 ms @ 48 kHz
+const FRAME_BYTES   = FRAME_SAMPLES * 2;  // int16 mono
+const OPUS_BITRATE  = 12000;        // 12 kbps — plenty for SSB voice
+// ────────────────────────────────────────────────────────────────
 
 app.use(express.json());
 app.use(express.static('public'));
-
-// ── Proxy do Python WebRTC serwera ──────────────────────────
-app.post('/offer', async (req, res) => {
-    try {
-        // Node.js nie ma fetch wbudowanego w starszych wersjach — użyj http/https
-        const data = JSON.stringify(req.body);
-
-        const options = {
-            hostname: '127.0.0.1',
-            port: 8443,
-            path: '/offer',
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(data),
-            },
-            // Ignoruj self-signed cert Pythona (lokalne połączenie)
-            rejectUnauthorized: false,
-        };
-
-        const proxyReq = https.request(options, (proxyRes) => {
-            let body = '';
-            proxyRes.on('data', chunk => body += chunk);
-            proxyRes.on('end', () => {
-                res.setHeader('Content-Type', 'application/json');
-                res.send(body);
-            });
-        });
-
-        proxyReq.on('error', (err) => {
-            console.error('Błąd proxy do Python:', err.message);
-            res.status(502).json({ error: 'Python WebRTC serwer niedostępny' });
-        });
-
-        proxyReq.write(data);
-        proxyReq.end();
-
-    } catch (err) {
-        console.error('Offer proxy error:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-// ────────────────────────────────────────────────────────────
 
 // Funkcja do komunikacji z rigctld
 function sendRigCommand(cmd) {
@@ -256,13 +221,94 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ── WebSocket Audio Bridge ────────────────────────────────────────
+const audioClients = new Set();
+let captureProc  = null;
+let playbackProc = null;
+let captureBuf   = Buffer.alloc(0);
+
+function setupAudioBridge(httpsServer) {
+    let OpusEncoder, OpusDecoder;
+    try {
+        ({ OpusEncoder, OpusDecoder } = require('@discordjs/opus'));
+    } catch (e) {
+        console.warn('Audio bridge disabled — run: npm i @discordjs/opus');
+        return;
+    }
+
+    const encoder = new OpusEncoder(AUDIO_RATE, 1);
+    encoder.setBitrate(OPUS_BITRATE);
+    encoder.setApplication(2048);  // OPUS_APPLICATION_VOIP
+    const decoder = new OpusDecoder(AUDIO_RATE, 1);
+
+    // Capture: ALSA → raw PCM → encode Opus → broadcast to all WS clients
+    captureProc = spawn('ffmpeg', [
+        '-f', 'alsa', '-i', AUDIO_DEVICE,
+        '-ar', String(AUDIO_RATE), '-ac', '1',
+        '-f', 's16le', 'pipe:1'
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    captureProc.stderr.on('data', () => {});
+    captureProc.on('error', (e) => console.error('Capture FFmpeg error:', e.message));
+
+    captureProc.stdout.on('data', (chunk) => {
+        captureBuf = Buffer.concat([captureBuf, chunk]);
+        while (captureBuf.length >= FRAME_BYTES) {
+            const frame = captureBuf.slice(0, FRAME_BYTES);
+            captureBuf = captureBuf.slice(FRAME_BYTES);
+            try {
+                const opus = encoder.encode(frame);
+                for (const ws of audioClients) {
+                    if (ws.readyState === WebSocket.OPEN) ws.send(opus);
+                }
+            } catch (_) {}
+        }
+    });
+
+    // Playback: receive Opus from any WS client → decode PCM → ALSA
+    playbackProc = spawn('ffmpeg', [
+        '-f', 's16le', '-ar', String(AUDIO_RATE), '-ac', '1', '-i', 'pipe:0',
+        '-f', 'alsa', AUDIO_DEVICE
+    ], { stdio: ['pipe', 'ignore', 'pipe'] });
+    playbackProc.stderr.on('data', () => {});
+    playbackProc.on('error', (e) => console.error('Playback FFmpeg error:', e.message));
+
+    // WebSocket server — same HTTPS server, path /audio
+    const wss = new WebSocket.Server({ server: httpsServer, path: '/audio' });
+
+    wss.on('connection', (ws, req) => {
+        console.log('Audio WS connected:', req.socket.remoteAddress);
+        audioClients.add(ws);
+
+        ws.on('message', (data) => {
+            if (!playbackProc || playbackProc.killed) return;
+            try {
+                const pcm = decoder.decode(Buffer.from(data));
+                playbackProc.stdin.write(pcm);
+            } catch (_) {}
+        });
+
+        ws.on('close', () => {
+            audioClients.delete(ws);
+            console.log('Audio WS disconnected:', req.socket.remoteAddress);
+        });
+        ws.on('error', () => audioClients.delete(ws));
+    });
+
+    console.log(`Audio bridge: device=${AUDIO_DEVICE} rate=${AUDIO_RATE}Hz bitrate=${OPUS_BITRATE}bps`);
+}
+// ─────────────────────────────────────────────────────────────────
+
 // HTTPS — wymagane dla WebRTC (mikrofon działa tylko na HTTPS)
 const sslOptions = {
     key:  fs.readFileSync('key.pem'),
     cert: fs.readFileSync('cert.pem'),
 };
 
-require('https').createServer(sslOptions, app).listen(WEB_PORT, () => {
+const httpsServer = require('https').createServer(sslOptions, app);
+
+setupAudioBridge(httpsServer);
+
+httpsServer.listen(WEB_PORT, () => {
     console.log(`Web Radio Control: https://localhost:${WEB_PORT}`);
-    console.log(`Proxy WebRTC → Python: ${PYTHON_SERVER}`);
+    console.log(`Audio WebSocket:    wss://localhost:${WEB_PORT}/audio`);
 });

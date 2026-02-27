@@ -132,7 +132,6 @@
                     <button class="btn btn-power" id="audioBtn" onclick="toggleAudio()">▶ Connect Audio</button>
                     <div id="audioStatus" style="text-align:center; color:#888; font-size:13px;">disconnected</div>
                 </div>
-                <audio id="radioAudio" autoplay style="display:none"></audio>
             </div>
 
             <!-- Functions -->
@@ -523,124 +522,207 @@
             btn.classList.toggle('btn-active');
         }
 
-        // ── WebRTC Audio ──────────────────────────────────────────
-        let pc = null;
-        let localStream = null;
+        // ── WebSocket Audio (Web Codecs API — Chrome/Edge 94+) ───────────────
+        // Protocol: each binary WebSocket message = one raw Opus frame (20 ms, mono, 48 kHz)
+        // RX: server → browser  (radio audio out)
+        // TX: browser → server  (mic / PTT audio in)
+        let audioWs      = null;
+        let audioCtx     = null;
+        let rxDecoder    = null;
+        let txEncoder    = null;
+        let txWorklet    = null;
+        let micStream    = null;
+        let txPtsUs      = 0;
+        let rxPtsCount   = 0;
+        let nextPlayTime = 0;
+        const OPUS_FRAME_SAMPLES = 960;   // 20 ms @ 48 kHz
+        const RX_INIT_BUFFER_S   = 0.08; // 80 ms initial jitter buffer
 
         async function toggleAudio() {
-            if (pc) { disconnectAudio(); } else { await connectAudio(); }
+            if (audioWs) disconnectAudio(); else await connectAudio();
         }
 
         async function connectAudio() {
-            const btn = document.getElementById('audioBtn');
+            const btn    = document.getElementById('audioBtn');
             const status = document.getElementById('audioStatus');
-            const audioEl = document.getElementById('radioAudio');
 
-            // iOS Safari: play() MUSI być wywołane SYNCHRONICZNIE podczas gestu
-            audioEl.muted = true;
-            audioEl.play().catch(() => {});
+            if (!('AudioEncoder' in window && 'AudioDecoder' in window)) {
+                status.textContent = 'Web Codecs not supported — use Chrome or Edge';
+                status.style.color = '#ff6b6b';
+                return;
+            }
 
             btn.textContent = '⏳ Connecting...';
-            btn.disabled = true;
-            status.textContent = 'Connecting...';
-            status.style.color = '#ffd700';
+            btn.disabled    = true;
+            status.textContent  = 'Connecting...';
+            status.style.color  = '#ffd700';
 
             try {
-                pc = new RTCPeerConnection({
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' },
-                    ]
-                });
-                pc.addTransceiver('audio', { direction: 'recvonly' });
+                // AudioContext at 48 kHz — also resamples mic input automatically
+                audioCtx     = new AudioContext({ sampleRate: 48000 });
+                nextPlayTime = audioCtx.currentTime + RX_INIT_BUFFER_S;
 
-                // Mikrofon — exact:false wymagane przez iOS Safari żeby faktycznie wyłączyć
-                // przetwarzanie (zwykłe false jest ignorowane)
+                // ── RX: Opus → AudioContext scheduled playback ───────────────
+                rxDecoder = new AudioDecoder({
+                    output: (audioData) => {
+                        const f32 = new Float32Array(audioData.numberOfFrames);
+                        audioData.copyTo(f32, { planeIndex: 0, format: 'f32-planar' });
+                        audioData.close();
+
+                        const buf = audioCtx.createBuffer(1, f32.length, 48000);
+                        buf.getChannelData(0).set(f32);
+                        const src = audioCtx.createBufferSource();
+                        src.buffer = buf;
+                        src.connect(audioCtx.destination);
+
+                        const now = audioCtx.currentTime;
+                        // Reset schedule if we fell too far behind (e.g. tab was hidden)
+                        if (nextPlayTime < now + 0.02) nextPlayTime = now + RX_INIT_BUFFER_S;
+                        src.start(nextPlayTime);
+                        nextPlayTime += f32.length / 48000;
+                    },
+                    error: (e) => console.error('RX decode:', e)
+                });
+                rxDecoder.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 1 });
+
+                // ── WebSocket connection ─────────────────────────────────────
+                const wsUrl = `wss://${location.host}/audio`;
+                audioWs = new WebSocket(wsUrl);
+                audioWs.binaryType = 'arraybuffer';
+
+                await new Promise((resolve, reject) => {
+                    audioWs.onopen  = resolve;
+                    audioWs.onerror = () => reject(new Error('WebSocket connection failed'));
+                    setTimeout(() => reject(new Error('Connection timeout')), 5000);
+                });
+
+                audioWs.onmessage = (event) => {
+                    if (!rxDecoder || rxDecoder.state === 'closed') return;
+                    if (audioCtx.state === 'suspended') audioCtx.resume();
+                    try {
+                        rxDecoder.decode(new EncodedAudioChunk({
+                            type:      'key',
+                            timestamp: rxPtsCount * OPUS_FRAME_SAMPLES / 48000 * 1e6,
+                            data:      event.data
+                        }));
+                        rxPtsCount++;
+                    } catch (_) {}
+                };
+
+                audioWs.onclose = () => disconnectAudio();
+                audioWs.onerror = (e) => { console.error('WS error:', e); disconnectAudio(); };
+
+                // ── TX: mic → AudioWorklet (accumulate to 960 frames) → AudioEncoder → WS
+                // AudioWorklet inline source — accumulates 128-sample AudioWorklet blocks
+                // into 960-sample Opus frames and posts them to the main thread.
+                const workletSrc = `
+class OpusFrameCollector extends AudioWorkletProcessor {
+    constructor() { super(); this._buf = []; }
+    process(inputs) {
+        const ch = inputs[0][0];
+        if (ch) {
+            for (let i = 0; i < ch.length; i++) this._buf.push(ch[i]);
+            while (this._buf.length >= 960) {
+                const frame = new Float32Array(this._buf.splice(0, 960));
+                this.port.postMessage(frame, [frame.buffer]);
+            }
+        }
+        return true;
+    }
+}
+registerProcessor('opus-frame-collector', OpusFrameCollector);
+`;
                 try {
-                    localStream = await navigator.mediaDevices.getUserMedia({
+                    micStream = await navigator.mediaDevices.getUserMedia({
                         audio: {
-                            echoCancellation: { exact: false },
-                            noiseSuppression: { exact: false },
-                            autoGainControl:  { exact: false },
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl:  false,
+                            channelCount:     1,
+                            sampleRate:       48000
                         }
                     });
-                    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+                    const blob = new Blob([workletSrc], { type: 'application/javascript' });
+                    await audioCtx.audioWorklet.addModule(URL.createObjectURL(blob));
+
+                    txEncoder = new AudioEncoder({
+                        output: (chunk) => {
+                            if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+                                const buf = new ArrayBuffer(chunk.byteLength);
+                                chunk.copyTo(buf);
+                                audioWs.send(buf);
+                            }
+                        },
+                        error: (e) => console.error('TX encode:', e)
+                    });
+                    txEncoder.configure({
+                        codec:        'opus',
+                        sampleRate:   48000,
+                        numberOfChannels: 1,
+                        bitrate:      12000,
+                        bitrateMode:  'constant'
+                    });
+
+                    const micSource = audioCtx.createMediaStreamSource(micStream);
+                    txWorklet = new AudioWorkletNode(audioCtx, 'opus-frame-collector');
+                    micSource.connect(txWorklet);
+
+                    txWorklet.port.onmessage = (evt) => {
+                        if (!txEncoder || txEncoder.state === 'closed') return;
+                        const f32 = new Float32Array(evt.data);
+                        const audioData = new AudioData({
+                            format:           'f32-planar',
+                            sampleRate:       48000,
+                            numberOfFrames:   f32.length,
+                            numberOfChannels: 1,
+                            timestamp:        txPtsUs,
+                            data:             f32
+                        });
+                        txEncoder.encode(audioData);
+                        audioData.close();
+                        txPtsUs += f32.length / 48000 * 1e6;
+                    };
+
                 } catch (micErr) {
-                    // exact:false może być odrzucone jeśli iOS nie potrafi spełnić —
-                    // fallback do prostej prośby bez ograniczeń
-                    console.warn('Mic exact constraints failed, retrying plain:', micErr.message);
-                    try {
-                        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-                    } catch (micErr2) {
-                        console.warn('Mikrofon niedostępny:', micErr2.message);
-                    }
+                    console.warn('Mic unavailable — RX only:', micErr.message);
+                    status.textContent = 'Connected (RX only — no mic)';
+                    status.style.color = '#ffd700';
                 }
 
-                pc.ontrack = (evt) => {
-                    audioEl.srcObject = evt.streams[0];
-                    audioEl.muted = false;
-                    audioEl.play().catch(e => console.warn('play error:', e));
-                };
-
-                pc.oniceconnectionstatechange = () => {
-                    console.log('ICE:', pc.iceConnectionState);
-                    status.textContent = 'ICE: ' + pc.iceConnectionState;
-                };
-
-                pc.onconnectionstatechange = () => {
-                    const s = pc.connectionState;
-                    console.log('Connection:', s);
-                    status.textContent = s;
-                    if (s === 'connected') {
-                        status.style.color = '#4CAF50';
-                        btn.textContent = '■ Disconnect Audio';
-                        btn.disabled = false;
-                        btn.classList.add('off');
-                    } else if (s === 'failed' || s === 'disconnected' || s === 'closed') {
-                        status.style.color = '#ff6b6b';
-                        status.textContent = 'Failed (' + s + ') – check console';
-                        setTimeout(disconnectAudio, 2000);
-                    }
-                };
-
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-
-                await new Promise(resolve => {
-                    if (pc.iceGatheringState === 'complete') return resolve();
-                    pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve(); };
-                    setTimeout(resolve, 3000);
-                });
-
-                const resp = await fetch('/offer', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type })
-                });
-                const answer = await resp.json();
-                await pc.setRemoteDescription(answer);
+                if (status.textContent !== 'Connected (RX only — no mic)') {
+                    status.textContent = 'Connected';
+                    status.style.color = '#4CAF50';
+                }
+                btn.textContent = '■ Disconnect Audio';
+                btn.disabled    = false;
+                btn.classList.add('off');
 
             } catch (err) {
-                console.error('WebRTC error:', err);
+                console.error('Audio connect error:', err);
                 status.textContent = 'Error: ' + err.message;
                 status.style.color = '#ff6b6b';
+                btn.disabled       = false;
+                btn.textContent    = '▶ Connect Audio';
                 disconnectAudio();
             }
         }
 
         function disconnectAudio() {
-            if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-            if (pc) { pc.close(); pc = null; }
-            const audioEl = document.getElementById('radioAudio');
-            audioEl.srcObject = null;
-            audioEl.muted = true;
+            if (txWorklet)  { txWorklet.disconnect(); txWorklet = null; }
+            if (txEncoder && txEncoder.state !== 'closed')  { txEncoder.close();  txEncoder = null; }
+            if (micStream)  { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+            if (rxDecoder && rxDecoder.state !== 'closed')  { rxDecoder.close();  rxDecoder = null; }
+            if (audioCtx)   { audioCtx.close();   audioCtx = null; }
+            if (audioWs)    { audioWs.onclose = null; audioWs.onerror = null; audioWs.close(); audioWs = null; }
+            rxPtsCount = 0; txPtsUs = 0;
             const btn = document.getElementById('audioBtn');
             btn.textContent = '▶ Connect Audio';
-            btn.disabled = false;
+            btn.disabled    = false;
             btn.classList.remove('off');
-            document.getElementById('audioStatus').textContent = 'Disconnected';
-            document.getElementById('audioStatus').style.color = '#888';
+            const status = document.getElementById('audioStatus');
+            status.textContent = 'Disconnected';
+            status.style.color = '#888';
         }
         // ─────────────────────────────────────────────────────────
 

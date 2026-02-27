@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-Klient WebRTC — Windows PC
-Odbiera audio z radia, wysyła mikrofon.
+Klient WebSocket Audio — Windows PC
+Odbiera audio z radia (RX), wysyła mikrofon (TX).
+Zastępuje klienta aiortc/WebRTC — brak ICE/DTLS/SRTP, niskie opóźnienie,
+~12 kbps Opus zamiast 100+ kbps.
 
 Instalacja:
-    pip install aiortc aiohttp sounddevice numpy
+    pip install websockets sounddevice numpy opuslib
 
 Użycie:
-    python audioClient.py                          # domyślne urządzenia
-    python audioClient.py --list-devices           # lista urządzeń
-    python audioClient.py --input 1 --output 3    # konkretne urządzenia
+    python audioClient.py                              # domyślne urządzenia
+    python audioClient.py --list-devices               # lista urządzeń
+    python audioClient.py --input 1 --output 3         # konkretne urządzenia
+    python audioClient.py --server wss://192.168.x.x/audio
 """
 
 import asyncio
@@ -19,240 +22,208 @@ import argparse
 import queue
 import threading
 import time
-import fractions
 import numpy as np
 import sounddevice as sd
-import aiohttp
-import av
-from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+import websockets
+import opuslib
 
 # Logging — gdy używany jako moduł nie wysyła nic (NullHandler).
 # Przy uruchomieniu bezpośrednim basicConfig jest wywoływany w __main__.
 log = logging.getLogger("audioClient")
 log.addHandler(logging.NullHandler())
 
-SERVER      = "https://192.168.152.12:8443"
-SD_RATE     = 48000
-SAMPLE_TIME = 20
-BLOCK_SIZE  = SD_RATE * SAMPLE_TIME // 1000   # 960 próbek = 20 ms
+SERVER        = "wss://192.168.152.12/audio"
+SD_RATE       = 48000
+FRAME_SAMPLES = 960         # 20 ms @ 48 kHz
+FRAME_BYTES   = FRAME_SAMPLES * 2   # int16 mono
+OPUS_BITRATE  = 12000       # 12 kbps — wystarczy dla SSB
+RX_QUEUE_SIZE = 15          # ~300 ms bufora jitter
+RX_PREFILL    = 2           # ile ramek wstępnie buforować
+FADE_LEN      = 256         # próbki fade-out przy underrun
 
-# Rozmiar kolejki odbioru: ~300 ms bufora jitter. Przy maxsize=3 (60 ms) każde
-# chwilowe opóźnienie sieci powoduje underrun → skok do zera → trzask.
-RX_QUEUE_SIZE = 3
-
-# Ile próbek wstępnie buforować zanim zacznie wychodzić dźwięk (2 bloki = 40 ms).
-RX_PREFILL = 2
-
-# Długość fade-out przy underrun (próbki). Zamiast skoku do zera stosujemy
-# krótkie wygaszenie, co eliminuje "klik".
-FADE_LEN = 256
 
 # ─────────────────────────────────────────────────────────────
-# ODBIÓR: WebRTC track → sounddevice output
+# Audio Bridge: WebSocket ↔ sounddevice, Opus encode/decode
 # ─────────────────────────────────────────────────────────────
 
-class RadioPlayer:
+class AudioBridge:
+    """Bidirectional audio over a single WebSocket connection.
 
-    def __init__(self, device):
-        self._device    = device
-        self._sync_q    = queue.Queue(maxsize=RX_QUEUE_SIZE)
-        self._resampler = av.AudioResampler(format="s16", layout="mono", rate=SD_RATE)
+    RX  radio → server → WebSocket → Opus decode → sounddevice output
+    TX  sounddevice input → Opus encode → WebSocket → server → radio
+    """
+
+    def __init__(self, input_device=None, output_device=None):
+        self._in_dev  = input_device
+        self._out_dev = output_device
+
+        self._enc = opuslib.Encoder(SD_RATE, 1, opuslib.APPLICATION_VOIP)
+        self._enc.bitrate = OPUS_BITRATE
+        self._dec = opuslib.Decoder(SD_RATE, 1)
+
+        # Raw int16 PCM bytes from mic capture  → encode → WS send
+        self._tx_q = queue.Queue(maxsize=6)
+        # Decoded float32 samples from WS receive → playback callback
+        self._rx_q = queue.Queue(maxsize=RX_QUEUE_SIZE)
+
         self._prefilled = False
-        # ostatni odtworzony fragment — do fade-out przy underrun
-        self._last      = np.zeros(BLOCK_SIZE, dtype=np.float32)
+        self._last      = np.zeros(FRAME_SAMPLES, dtype=np.float32)
         self._fade_win  = np.linspace(1.0, 0.0, FADE_LEN, dtype=np.float32)
 
-    def start(self, loop):
-        t = threading.Thread(target=self._sd_thread, daemon=True)
-        t.start()
+    # ── Playback thread ───────────────────────────────────────────────
 
-    def _sd_thread(self):
-
+    def _start_output(self):
         def callback(outdata, frames, time_info, status):
-            # Czekaj na wstępne buforowanie żeby uniknąć natychmiastowych underrunów.
             if not self._prefilled:
-                if self._sync_q.qsize() >= RX_PREFILL:
+                if self._rx_q.qsize() >= RX_PREFILL:
                     self._prefilled = True
                 else:
                     outdata[:, 0] = 0.0
                     return
-
             try:
-                chunk = self._sync_q.get_nowait()
+                chunk = self._rx_q.get_nowait()
                 if len(chunk) < frames:
                     chunk = np.pad(chunk, (0, frames - len(chunk)))
-                self._last[:] = chunk[:BLOCK_SIZE]
+                self._last[:] = chunk[:FRAME_SAMPLES]
                 outdata[:, 0] = chunk[:frames]
             except queue.Empty:
                 # Łagodne wygaszenie zamiast skoku do zera → brak trzasku
                 fade = self._last.copy()
-                apply = min(FADE_LEN, frames)
-                fade[:apply] *= self._fade_win[:apply]
-                fade[apply:]  = 0.0
+                n = min(FADE_LEN, frames)
+                fade[:n] *= self._fade_win[:n]
+                fade[n:]  = 0.0
                 self._last[:] = 0.0
                 outdata[:, 0] = fade[:frames]
 
         kwargs = dict(samplerate=SD_RATE, channels=1, dtype="float32",
-                      blocksize=BLOCK_SIZE, callback=callback)
-        if self._device is not None:
-            kwargs["device"] = self._device
+                      blocksize=FRAME_SAMPLES, callback=callback)
+        if self._out_dev is not None:
+            kwargs["device"] = self._out_dev
 
-        log.debug("Odtwarzanie: device=%s %d Hz", self._device, SD_RATE)
-        with sd.OutputStream(**kwargs):
-            while True:
-                time.sleep(1)
+        def _run():
+            log.debug("Odtwarzanie: device=%s %dHz", self._out_dev, SD_RATE)
+            with sd.OutputStream(**kwargs):
+                threading.Event().wait()
 
-    def addTrack(self, track):
-        asyncio.ensure_future(self._run(track))
+        threading.Thread(target=_run, daemon=True).start()
 
-    async def _run(self, track):
-        log.debug("RadioPlayer: start odbioru")
-        while True:
-            try:
-                frame = await track.recv()
-                for f in self._resampler.resample(frame):
-                    raw     = np.frombuffer(bytes(f.planes[0]), dtype=np.int16)
-                    samples = raw.astype(np.float32) / 32768.0
-                    try:
-                        self._sync_q.put_nowait(samples)
-                    except queue.Full:
-                        # Kolejka pełna — stary bufor wypychamy żeby zrobić miejsce
-                        try:
-                            self._sync_q.get_nowait()
-                        except queue.Empty:
-                            pass
-                        self._sync_q.put_nowait(samples)
-            except Exception as e:
-                log.warning("RadioPlayer koniec: %s", e)
-                break
+    # ── Capture thread ────────────────────────────────────────────────
 
-
-# ─────────────────────────────────────────────────────────────
-# NADAWANIE: sounddevice input → WebRTC track
-# ─────────────────────────────────────────────────────────────
-
-class MicTrack(MediaStreamTrack):
-    kind = "audio"
-
-    def __init__(self, device):
-        super().__init__()
-        self._device    = device
-        self._sync_q    = queue.Queue(maxsize=6)
-        self._pts       = 0
-        self._time_base = fractions.Fraction(1, SD_RATE)
-
-    def start_capture(self):
-        t = threading.Thread(target=self._sd_thread, daemon=True)
-        t.start()
-
-    def _sd_thread(self):
+    def _start_input(self):
         def callback(indata, frames, time_info, status):
-            chunk = (indata[:, 0] * 32767).clip(-32768, 32767).astype(np.int16).copy()
+            chunk = (indata[:, 0] * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
             try:
-                self._sync_q.put_nowait(chunk)
+                self._tx_q.put_nowait(chunk)
             except queue.Full:
-                # Zamiast cicho upuścić ramkę, wyrzuć najstarszą
-                try:
-                    self._sync_q.get_nowait()
-                except queue.Empty:
-                    pass
-                self._sync_q.put_nowait(chunk)
+                try:    self._tx_q.get_nowait()
+                except queue.Empty: pass
+                self._tx_q.put_nowait(chunk)
 
         kwargs = dict(samplerate=SD_RATE, channels=1, dtype="float32",
-                      blocksize=BLOCK_SIZE, callback=callback)
-        if self._device is not None:
-            kwargs["device"] = self._device
+                      blocksize=FRAME_SAMPLES, callback=callback)
+        if self._in_dev is not None:
+            kwargs["device"] = self._in_dev
 
-        log.debug("Mikrofon: device=%s %d Hz", self._device, SD_RATE)
-        with sd.InputStream(**kwargs):
-            while True:
-                time.sleep(1)
+        def _run():
+            log.debug("Mikrofon: device=%s %dHz", self._in_dev, SD_RATE)
+            with sd.InputStream(**kwargs):
+                threading.Event().wait()
 
-    async def recv(self):
+        threading.Thread(target=_run, daemon=True).start()
+
+    # ── RX coroutine: WebSocket → decode → play queue ─────────────────
+
+    async def _rx_loop(self, ws):
+        async for message in ws:
+            if not isinstance(message, (bytes, bytearray)):
+                continue
+            try:
+                pcm = self._dec.decode(bytes(message), FRAME_SAMPLES)
+                samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+                try:
+                    self._rx_q.put_nowait(samples)
+                except queue.Full:
+                    try:    self._rx_q.get_nowait()
+                    except queue.Empty: pass
+                    self._rx_q.put_nowait(samples)
+            except Exception as e:
+                log.debug("Decode error: %s", e)
+
+    # ── TX coroutine: capture queue → encode → WebSocket ──────────────
+
+    async def _tx_loop(self, ws):
         loop = asyncio.get_event_loop()
-        chunk = await loop.run_in_executor(None, self._sync_q.get)
+        while True:
+            try:
+                pcm_bytes = await asyncio.wait_for(
+                    loop.run_in_executor(None, self._tx_q.get), timeout=2.0)
+                opus = self._enc.encode(pcm_bytes, FRAME_SAMPLES)
+                await ws.send(opus)
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                log.warning("TX error: %s", e)
+                break
 
-        frame            = av.AudioFrame.from_ndarray(chunk.reshape(1, -1), format="s16", layout="mono")
-        frame.sample_rate = SD_RATE
-        frame.pts         = self._pts
-        frame.time_base   = self._time_base
-        self._pts        += len(chunk)
-        return frame
+    # ── Main ──────────────────────────────────────────────────────────
 
-
-# ─────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────
-
-async def run(input_device, output_device, status_callback=None, stop_event=None, server_url=None):
-    loop = asyncio.get_event_loop()
-    target_server = server_url or SERVER
-
-    if status_callback:
-        status_callback("connecting")
-
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode    = ssl.CERT_NONE
-
-    pc = RTCPeerConnection()
-
-    mic = MicTrack(input_device)
-    mic.start_capture()
-    pc.addTrack(mic)
-
-    player = RadioPlayer(output_device)
-    player.start(loop)
-
-    @pc.on("track")
-    def on_track(track):
-        log.debug("Track z RPi: %s", track.kind)
-        if track.kind == "audio":
-            player.addTrack(track)
-
-    @pc.on("connectionstatechange")
-    async def on_conn():
-        log.info("connectionState: %s", pc.connectionState)
+    async def run(self, server_url=None, status_callback=None, stop_event=None):
+        url = server_url or SERVER
         if status_callback:
-            status_callback(pc.connectionState)
+            status_callback("connecting")
 
-    @pc.on("iceconnectionstatechange")
-    async def on_ice():
-        log.debug("ICE: %s", pc.iceConnectionState)
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode    = ssl.CERT_NONE
 
-    offer = await pc.createOffer()
-    await pc.setLocalDescription(offer)
+        self._start_output()
+        self._start_input()
 
-    for _ in range(30):
-        if pc.iceGatheringState == "complete":
-            break
-        await asyncio.sleep(0.1)
+        log.info("Łączę z %s", url)
+        async with websockets.connect(url, ssl=ssl_ctx) as ws:
+            log.info("Połączono!")
+            if status_callback:
+                status_callback("connected")
 
-    log.info("Wysyłam offer → %s", target_server)
+            tasks = [
+                asyncio.ensure_future(self._rx_loop(ws)),
+                asyncio.ensure_future(self._tx_loop(ws)),
+            ]
 
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_ctx)) as session:
-        async with session.post(
-            f"{target_server}/offer",
-            json={"sdp": pc.localDescription.sdp, "type": pc.localDescription.type},
-        ) as resp:
-            data = await resp.json()
+            if stop_event is not None:
+                loop = asyncio.get_event_loop()
+                stop_task = asyncio.ensure_future(
+                    loop.run_in_executor(None, stop_event.wait))
+                tasks.append(stop_task)
 
-    await pc.setRemoteDescription(RTCSessionDescription(sdp=data["sdp"], type=data["type"]))
-    log.info("Połączono!")
+            try:
+                done, pending = await asyncio.wait(
+                    tasks, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for t in tasks:
+                    t.cancel()
 
-    if stop_event is not None:
-        await loop.run_in_executor(None, stop_event.wait)
-        await pc.close()
-    else:
-        await asyncio.Event().wait()
+        if status_callback:
+            status_callback("disconnected")
 
+
+# ─────────────────────────────────────────────────────────────
+# Public API (backwards-compatible with remoteControl.py imports)
+# ─────────────────────────────────────────────────────────────
+
+async def run(input_device, output_device, status_callback=None,
+              stop_event=None, server_url=None):
+    bridge = AudioBridge(input_device, output_device)
+    await bridge.run(server_url, status_callback, stop_event)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="FT-450D WebRTC client")
+    parser = argparse.ArgumentParser(description="FT-450D WebSocket audio client")
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument("--input",  type=int, default=None, metavar="N")
     parser.add_argument("--output", type=int, default=None, metavar="N")
+    parser.add_argument("--server", default=None, metavar="URL",
+                        help=f"WebSocket URL (default: {SERVER})")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Pokaż szczegółowe logi (DEBUG)")
     args = parser.parse_args()
@@ -267,6 +238,6 @@ if __name__ == "__main__":
         raise SystemExit
 
     try:
-        asyncio.run(run(args.input, args.output))
+        asyncio.run(run(args.input, args.output, server_url=args.server))
     except KeyboardInterrupt:
         log.info("Zatrzymano")

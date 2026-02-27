@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Packages
-sudo apt-get install nodejs npm ffmpeg
+sudo apt-get install -y nodejs npm ffmpeg
 
 # OpenWebRX+ (Bookworm)
 # curl -s https://luarvique.github.io/ppa/openwebrx-plus.gpg | sudo gpg --yes --dearmor -o /etc/apt/trusted.gpg.d/openwebrx-plus.gpg
