@@ -127,7 +127,14 @@ io.on('connection', (socket) => {
         try { await handleCommand(msg); }
         catch (err) { console.error('Command error:', err.message, msg); }
     });
-    socket.on('disconnect', () => console.log(`Client disconnected: ${socket.id}`));
+    socket.on('disconnect', () => {
+        console.log(`Client disconnected: ${socket.id}`);
+        if (io.sockets.sockets.size === 0 && txActive) {
+            txActive = false;
+            sendRigCommand('T 0').catch(() => {});
+            console.warn('All clients disconnected — forced PTT off');
+        }
+    });
 });
 
 // ── State polling ────────────────────────────────────────────
@@ -229,10 +236,14 @@ async function pollState() {
     io.emit('state', state);
 }
 
+let _pollBusy = false;
 setInterval(async () => {
     if (io.sockets.sockets.size === 0) return;
+    if (_pollBusy) return;
+    _pollBusy = true;
     try { await pollState(); }
     catch (err) { console.error('Poll error:', err.message); }
+    finally { _pollBusy = false; }
 }, POLL_INTERVAL_MS);
 
 httpsServer.listen(WEB_PORT, () => {
