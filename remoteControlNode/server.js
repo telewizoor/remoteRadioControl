@@ -236,9 +236,8 @@ function setupAudioBridge(httpsServer) {
         return;
     }
 
-    const encoder = new OpusEncoder(AUDIO_RATE, 1);
+    const encoder = new OpusEncoder(AUDIO_RATE, 1, 2048);  // 2048 = OPUS_APPLICATION_VOIP
     encoder.setBitrate(OPUS_BITRATE);
-    encoder.setApplication(2048);  // OPUS_APPLICATION_VOIP
     const decoder = new OpusDecoder(AUDIO_RATE, 1);
 
     // Capture: ALSA → raw PCM → encode Opus → broadcast to all WS clients

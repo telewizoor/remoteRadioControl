@@ -6,7 +6,7 @@ Zastępuje klienta aiortc/WebRTC — brak ICE/DTLS/SRTP, niskie opóźnienie,
 ~12 kbps Opus zamiast 100+ kbps.
 
 Instalacja:
-    pip install websockets sounddevice numpy opuslib
+    pip install websockets sounddevice numpy pyogg
 
 Użycie:
     python audioClient.py                              # domyślne urządzenia
@@ -25,7 +25,7 @@ import time
 import numpy as np
 import sounddevice as sd
 import websockets
-import opuslib
+import pyogg
 
 # Logging — gdy używany jako moduł nie wysyła nic (NullHandler).
 # Przy uruchomieniu bezpośrednim basicConfig jest wywoływany w __main__.
@@ -57,9 +57,13 @@ class AudioBridge:
         self._in_dev  = input_device
         self._out_dev = output_device
 
-        self._enc = opuslib.Encoder(SD_RATE, 1, opuslib.APPLICATION_VOIP)
-        self._enc.bitrate = OPUS_BITRATE
-        self._dec = opuslib.Decoder(SD_RATE, 1)
+        self._enc = pyogg.OpusEncoder()
+        self._enc.set_application("voip")
+        self._enc.set_sampling_frequency(SD_RATE)
+        self._enc.set_channels(1)
+        self._dec = pyogg.OpusDecoder()
+        self._dec.set_sampling_frequency(SD_RATE)
+        self._dec.set_channels(1)
 
         # Raw int16 PCM bytes from mic capture  → encode → WS send
         self._tx_q = queue.Queue(maxsize=6)
@@ -138,7 +142,7 @@ class AudioBridge:
             if not isinstance(message, (bytes, bytearray)):
                 continue
             try:
-                pcm = self._dec.decode(bytes(message), FRAME_SAMPLES)
+                pcm = self._dec.decode(bytes(message))
                 samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
                 try:
                     self._rx_q.put_nowait(samples)
@@ -157,7 +161,7 @@ class AudioBridge:
             try:
                 pcm_bytes = await asyncio.wait_for(
                     loop.run_in_executor(None, self._tx_q.get), timeout=2.0)
-                opus = self._enc.encode(pcm_bytes, FRAME_SAMPLES)
+                opus = self._enc.encode(pcm_bytes)
                 await ws.send(opus)
             except asyncio.TimeoutError:
                 continue
