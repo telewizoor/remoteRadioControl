@@ -228,17 +228,17 @@ let playbackProc = null;
 let captureBuf   = Buffer.alloc(0);
 
 function setupAudioBridge(httpsServer) {
-    let OpusEncoder, OpusDecoder;
+    let OpusEncoder;
     try {
-        ({ OpusEncoder, OpusDecoder } = require('@discordjs/opus'));
+        ({ OpusEncoder } = require('@discordjs/opus'));
     } catch (e) {
         console.warn('Audio bridge disabled — run: npm i @discordjs/opus');
         return;
     }
 
-    const encoder = new OpusEncoder(AUDIO_RATE, 1, 2048);  // 2048 = OPUS_APPLICATION_VOIP
-    encoder.setBitrate(OPUS_BITRATE);
-    const decoder = new OpusDecoder(AUDIO_RATE, 1);
+    // OpusEncoder handles both encode() and decode() — there is no separate OpusDecoder
+    const opusCodec = new OpusEncoder(AUDIO_RATE, 1, 2048);  // 2048 = OPUS_APPLICATION_VOIP
+    opusCodec.setBitrate(OPUS_BITRATE);
 
     // Capture: ALSA → raw PCM → encode Opus → broadcast to all WS clients
     captureProc = spawn('ffmpeg', [
@@ -255,9 +255,9 @@ function setupAudioBridge(httpsServer) {
             const frame = captureBuf.slice(0, FRAME_BYTES);
             captureBuf = captureBuf.slice(FRAME_BYTES);
             try {
-                const opus = encoder.encode(frame);
+                const encoded = opusCodec.encode(frame);
                 for (const ws of audioClients) {
-                    if (ws.readyState === WebSocket.OPEN) ws.send(opus);
+                    if (ws.readyState === WebSocket.OPEN) ws.send(encoded);
                 }
             } catch (_) {}
         }
@@ -281,7 +281,7 @@ function setupAudioBridge(httpsServer) {
         ws.on('message', (data) => {
             if (!playbackProc || playbackProc.killed) return;
             try {
-                const pcm = decoder.decode(Buffer.from(data));
+                const pcm = opusCodec.decode(Buffer.from(data));
                 playbackProc.stdin.write(pcm);
             } catch (_) {}
         });
