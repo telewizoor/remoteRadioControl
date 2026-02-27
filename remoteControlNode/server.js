@@ -16,6 +16,7 @@ const TCP_TIMEOUT    = 1000;
 const ANTENNA_SWITCH_HOST = '127.0.0.1';
 const ANTENNA_SWITCH_PORT = 5000;
 const POLL_INTERVAL_MS    = 500;
+const TX_OFF_DELAY_MS     = 500;  // delay after TX ends before reading RX-only params
 
 // Python WebRTC serwer (lokalnie na RPi)
 const PYTHON_SERVER = 'https://127.0.0.1:8443';
@@ -98,6 +99,7 @@ const io = new SocketIO(httpsServer);
 
 // Track TX state — set when client sends setPTT
 let txActive = false;
+let txOffTime = 0;  // timestamp when TX was last released
 
 // ── Command handler ──────────────────────────────────────────
 async function handleCommand(msg) {
@@ -106,6 +108,7 @@ async function handleCommand(msg) {
         case 'setMode':       await sendRigCommand(`M ${msg.mode} ${msg.width || 0}`); break;
         case 'setPTT':
             txActive = msg.state === 1;
+            if (!txActive) txOffTime = Date.now();
             await sendRigCommand(`T ${msg.state}`);
             break;
         case 'setLevel':      await sendRigCommand(`L ${msg.level} ${msg.value}`); break;
@@ -131,6 +134,7 @@ io.on('connection', (socket) => {
         console.log(`Client disconnected: ${socket.id}`);
         if (io.sockets.sockets.size === 0 && txActive) {
             txActive = false;
+            txOffTime = Date.now();
             sendRigCommand('T 0').catch(() => {});
             console.warn('All clients disconnected — forced PTT off');
         }
@@ -206,7 +210,7 @@ async function pollState() {
         antenna:      r.ant?.status === 'fulfilled' ? (r.ant.value?.trim() ?? null) : null,
     };
 
-    if (!txActive) {
+    if (!txActive && (Date.now() - txOffTime >= TX_OFF_DELAY_MS)) {
         // Full RX poll — query DSP/config registers
         const rxKeys    = RX_ONLY_CMDS.map(e => e.key);
         const rxSettled = await Promise.allSettled(RX_ONLY_CMDS.map(e => e.cmd()));
