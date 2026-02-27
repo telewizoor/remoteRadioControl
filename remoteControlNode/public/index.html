@@ -237,14 +237,23 @@
         </div>
     </div>
 
+    <script src="/socket.io/socket.io.js"></script>
     <script>
+        // ── Socket.IO ──────────────────────────────────────────────
+        const socket = io();
+        socket.on('connect',    () => updateStatus('Connected', false));
+        socket.on('disconnect', () => updateStatus('Disconnected', true));
+        socket.on('state', applyState);
+
+        function send(cmd) { socket.emit('command', cmd); }
+        // ──────────────────────────────────────────────────────────
+
         let currentFreq = 14074000;
         let currentMode = 'USB';
         let currentFilter = 'normal';
         let currentVFO = 'VFOA';
         let powerState = false;
         let splitState = false;
-        let updateInterval = null;
 
         const filterWidths = {
             USB: { narrow: 1800, normal: 2400, wide: 3000 },
@@ -254,112 +263,87 @@
             AM:  { narrow: 3000, normal: 6000, wide: 9000 }
         };
 
-        async function apiCall(endpoint, method = 'GET', data = null) {
-            try {
-                const options = { method, headers: { 'Content-Type': 'application/json' } };
-                if (data) options.body = JSON.stringify(data);
-                const response = await fetch(`/api${endpoint}`, options);
-                return await response.json();
-            } catch (error) {
-                console.error('API Error:', error);
-                updateStatus('Connection Error', true);
-                return null;
-            }
-        }
-
         async function init() {
-            await updateAllStatus();
-            startPolling();
+            // State arrives via socket.on('state') — nothing to poll
         }
 
-        function startPolling() {
-            if (updateInterval) clearInterval(updateInterval);
-            updateInterval = setInterval(updateAllStatus, 1000);
-        }
+        // ── Apply full rig state from server push ─────────────────
+        function applyState(s) {
+            // Frequency
+            currentFreq = s.frequency;
+            document.getElementById('freqA').textContent = (s.frequency / 1e6).toFixed(6);
+            document.getElementById('freqB').textContent = (s.freqB  / 1e6).toFixed(6);
+            const fInput = document.getElementById('freqInput');
+            if (document.activeElement !== fInput) fInput.value = s.frequency;
 
-        async function updateAllStatus() {
-            const [freq, mode, vfo, power] = await Promise.all([
-                apiCall('/frequency'), apiCall('/mode'), apiCall('/vfo'), apiCall('/powerstat')
-            ]);
-            if (freq && !freq.error) { currentFreq = freq.frequency; updateFrequencyDisplay(); }
-            if (mode && !mode.error) { currentMode = mode.mode; if (mode.width) updateFilterFromWidth(mode.width); updateModeDisplay(); }
-            if (vfo && !vfo.error) { currentVFO = vfo.vfo; document.getElementById('vfoIndicator').textContent = vfo.vfo; }
-            if (power && !power.error) { powerState = power.power === 1; updatePowerDisplay(); }
+            // Mode
+            if (s.mode && s.mode !== currentMode) { currentMode = s.mode; updateModeDisplay(); }
+            if (s.width) updateFilterFromWidth(s.width);
 
-            const strength = await apiCall('/strength');
-            if (strength) updateSMeter(strength.value);
+            // VFO
+            currentVFO = s.vfo;
+            document.getElementById('vfoIndicator').textContent = s.vfo;
 
-            const vol = await apiCall('/level/AF');
-            if (vol) { document.getElementById('volume').value = Math.round(vol.value * 100); document.getElementById('volValue').textContent = Math.round(vol.value * 100); }
+            // Power
+            powerState = s.power === 1;
+            updatePowerDisplay();
 
-            const sql = await apiCall('/level/SQL');
-            if (sql) { document.getElementById('squelch').value = Math.round(sql.value * 100); document.getElementById('sqlValue').textContent = Math.round(sql.value * 100); }
+            // S-Meter
+            updateSMeter(s.strength);
 
-            const [tuner, nb, monitor, att, preamp] = await Promise.all([
-                apiCall('/func/TUNER'), apiCall('/func/NB'), apiCall('/func/MON'),
-                apiCall('/level/ATT'), apiCall('/level/PREAMP')
-            ]);
-            if (tuner !== null) document.getElementById('tunerBtn').classList.toggle('btn-active', tuner.value === 1);
-            if (nb !== null) document.getElementById('nbBtn').classList.toggle('btn-active', nb.value === 1);
-            if (monitor !== null) document.getElementById('monBtn').classList.toggle('btn-active', monitor.value === 1);
-            if (att !== null) document.getElementById('attBtn').classList.toggle('btn-active', att.value > 0);
-            if (preamp !== null) document.getElementById('ipoBtn').classList.toggle('btn-active', preamp.value > 0);
+            // Volume / Squelch
+            const vol = Math.round(s.volume * 100);
+            const sql = Math.round(s.squelch * 100);
+            if (document.activeElement !== document.getElementById('volume'))
+                document.getElementById('volume').value = vol;
+            document.getElementById('volValue').textContent = vol;
+            if (document.activeElement !== document.getElementById('squelch'))
+                document.getElementById('squelch').value = sql;
+            document.getElementById('sqlValue').textContent = sql;
+
+            // Functions
+            document.getElementById('tunerBtn').classList.toggle('btn-active', s.tuner   === 1);
+            document.getElementById('nbBtn')   .classList.toggle('btn-active', s.nb      === 1);
+            document.getElementById('monBtn')  .classList.toggle('btn-active', s.monitor === 1);
+            document.getElementById('attBtn')  .classList.toggle('btn-active', s.att     > 0);
+            document.getElementById('ipoBtn')  .classList.toggle('btn-active', s.preamp  > 0);
 
             updateStatus('Connected', false);
 
-            // DSP
-            const [shiftR, notchEnR, notchFR, nrEnR, nrLvlR] = await Promise.all([
-                apiCall('/level/IF'), apiCall('/func/MN'), apiCall('/level/NOTCHF'),
-                apiCall('/func/NR'), apiCall('/level/NR')
-            ]);
-            if (shiftR && shiftR.value !== undefined) {
-                const v = Math.round(shiftR.value);
-                if (document.activeElement !== document.getElementById('shiftSlider'))
-                    document.getElementById('shiftSlider').value = v;
-                document.getElementById('shiftVal').textContent = v;
-            }
-            if (notchEnR !== null) document.getElementById('notchEn').checked = notchEnR.value === 1;
-            if (notchFR && notchFR.value !== undefined) {
-                const v = Math.round(notchFR.value);
-                if (document.activeElement !== document.getElementById('notchSlider'))
-                    document.getElementById('notchSlider').value = v;
-                document.getElementById('notchVal').textContent = v;
-            }
-            if (nrEnR !== null) document.getElementById('nrEn').checked = nrEnR.value === 1;
-            if (nrLvlR && nrLvlR.value !== undefined) {
-                const v = Math.round(nrLvlR.value * 10);
-                if (document.activeElement !== document.getElementById('nrSlider'))
-                    document.getElementById('nrSlider').value = Math.max(1, Math.min(11, v || 1));
-                document.getElementById('nrVal').textContent = document.getElementById('nrSlider').value;
-            }
+            // DSP — shift
+            if (document.activeElement !== document.getElementById('shiftSlider'))
+                document.getElementById('shiftSlider').value = s.shift;
+            document.getElementById('shiftVal').textContent = s.shift;
+
+            // DSP — notch
+            document.getElementById('notchEn').checked = s.notchEn === 1;
+            if (document.activeElement !== document.getElementById('notchSlider'))
+                document.getElementById('notchSlider').value = s.notchFreq;
+            document.getElementById('notchVal').textContent = s.notchFreq;
+
+            // DSP — NR
+            document.getElementById('nrEn').checked = s.nrEn === 1;
+            const nrSliderVal = Math.max(1, Math.min(11, Math.round(s.nrLevel * 10) || 1));
+            if (document.activeElement !== document.getElementById('nrSlider'))
+                document.getElementById('nrSlider').value = nrSliderVal;
+            document.getElementById('nrVal').textContent = document.getElementById('nrSlider').value;
 
             // Antenna
-            try {
-                const antR = await apiCall('/antenna');
-                if (antR && antR.antenna) updateAntennaDisplay(antR.antenna);
-            } catch(e) {}
+            if (s.antenna) updateAntennaDisplay(s.antenna);
 
-            // TX Power meter
-            const rfpow = await apiCall('/level/RFPOWER_METER');
-            if (rfpow && rfpow.value !== undefined) updatePoMeter(rfpow.value);
-            // TX Power set slider (read configured power)
-            const rfpowSet = await apiCall('/level/RFPOWER');
-            if (rfpowSet && rfpowSet.value !== undefined) {
-                const pct = Math.round(rfpowSet.value * 100);
-                if (document.activeElement !== document.getElementById('txPwrSlider'))
-                    document.getElementById('txPwrSlider').value = pct;
-                document.getElementById('txPwrVal').textContent = pct;
-            }
+            // TX Power
+            if (s.rfpowerMeter !== undefined) updatePoMeter(s.rfpowerMeter);
+            const pct = Math.round(s.rfpower * 100);
+            if (document.activeElement !== document.getElementById('txPwrSlider'))
+                document.getElementById('txPwrSlider').value = pct;
+            document.getElementById('txPwrVal').textContent = pct;
         }
+        // ─────────────────────────────────────────────────────────
 
         function updateFrequencyDisplay() {
             document.getElementById('freqA').textContent = (currentFreq / 1000000).toFixed(6);
             const input = document.getElementById('freqInput');
-
-            // do not overwrite if the user is currently editing
-            if (document.activeElement !== input) {
-                input.value = currentFreq;
-            }
+            if (document.activeElement !== input) input.value = currentFreq;
         }
 
         function updateModeDisplay() {
@@ -403,39 +387,27 @@
             el.style.color = isError ? '#ff6b6b' : '#4CAF50';
         }
 
-        async function togglePower() {
+        function togglePower() {
             const newState = powerState ? 0 : 1;
-            await apiCall('/powerstat', 'POST', { state: newState });
-            setTimeout(updateAllStatus, newState ? 3000 : 500);
+            send({ cmd: 'setPowerstat', state: newState });
         }
 
         // ── DSP ──────────────────────────────────────────────────
         function onShiftInput(val) {
             val = parseInt(val);
-            if (Math.abs(val) <= 200) {
-                val = 0;
-                document.getElementById('shiftSlider').value = 0;
-            }
+            if (Math.abs(val) <= 200) { val = 0; document.getElementById('shiftSlider').value = 0; }
             document.getElementById('shiftVal').textContent = val;
         }
-        async function setShift(val) {
+        function setShift(val) {
             val = parseInt(val);
             if (Math.abs(val) <= 200) { val = 0; document.getElementById('shiftSlider').value = 0; }
             document.getElementById('shiftVal').textContent = val;
-            await apiCall('/level/IF', 'POST', { value: val });
+            send({ cmd: 'setLevel', level: 'IF', value: val });
         }
-        async function setNotchEnable(enabled) {
-            await apiCall('/func/MN', 'POST', { value: enabled ? 1 : 0 });
-        }
-        async function setNotchFreq(val) {
-            await apiCall('/level/NOTCHF', 'POST', { value: parseInt(val) });
-        }
-        async function setNrEnable(enabled) {
-            await apiCall('/func/NR', 'POST', { value: enabled ? 1 : 0 });
-        }
-        async function setNrLevel(val) {
-            await apiCall('/level/NR', 'POST', { value: parseInt(val) / 10 });
-        }
+        function setNotchEnable(enabled) { send({ cmd: 'setFunc',  func: 'MN',     value: enabled ? 1 : 0 }); }
+        function setNotchFreq(val)       { send({ cmd: 'setLevel', level: 'NOTCHF', value: parseInt(val) }); }
+        function setNrEnable(enabled)    { send({ cmd: 'setFunc',  func: 'NR',     value: enabled ? 1 : 0 }); }
+        function setNrLevel(val)         { send({ cmd: 'setLevel', level: 'NR',    value: parseInt(val) / 10 }); }
         // ─────────────────────────────────────────────────────────
 
         // ── Antenna ──────────────────────────────────────────────
@@ -446,10 +418,7 @@
                 document.getElementById('ant' + i + 'Btn').classList.toggle('active', String(ant) === String(i));
             });
         }
-        async function setAntenna(num) {
-            await apiCall('/antenna', 'POST', { antenna: num });
-            updateAntennaDisplay(num);
-        }
+        function setAntenna(num) { send({ cmd: 'setAntenna', antenna: num }); updateAntennaDisplay(num); }
         // ─────────────────────────────────────────────────────────
 
         // ── TX Power ─────────────────────────────────────────────
@@ -459,67 +428,65 @@
             document.getElementById('poMeter').textContent = pct + '%';
             document.getElementById('poDisplay').textContent = pct + ' W%';
         }
-        async function setTxPower(val) {
-            await apiCall('/level/RFPOWER', 'POST', { value: parseInt(val) / 100 });
-        }
+        function setTxPower(val) { send({ cmd: 'setLevel', level: 'RFPOWER', value: parseInt(val) / 100 }); }
         // ─────────────────────────────────────────────────────────
 
-        async function frequencyStep(step) { currentFreq += step; await setFrequency(currentFreq); }
+        function frequencyStep(step) { currentFreq += step; setFrequency(currentFreq); }
 
-        async function setFrequency(freq) {
+        function setFrequency(freq) {
             freq = parseInt(freq);
             if (isNaN(freq)) return;
             currentFreq = freq;
-            await apiCall('/frequency', 'POST', { frequency: freq });
+            send({ cmd: 'setFrequency', frequency: freq });
             updateFrequencyDisplay();
         }
 
-        async function setMode(mode) {
+        function setMode(mode) {
             currentMode = mode;
-            await apiCall('/mode', 'POST', { mode, width: filterWidths[mode][currentFilter] });
+            send({ cmd: 'setMode', mode, width: filterWidths[mode][currentFilter] });
             updateModeDisplay();
         }
 
-        async function setFilter(filter) {
+        function setFilter(filter) {
             currentFilter = filter;
-            await apiCall('/mode', 'POST', { mode: currentMode, width: filterWidths[currentMode][filter] });
+            send({ cmd: 'setMode', mode: currentMode, width: filterWidths[currentMode][filter] });
             updateFilterFromWidth(filterWidths[currentMode][filter]);
         }
 
-        async function bandUp() { await apiCall('/band/up', 'POST'); setTimeout(updateAllStatus, 500); }
-        async function bandDown() { await apiCall('/band/down', 'POST'); setTimeout(updateAllStatus, 500); }
-        async function vfoSwitch() { await apiCall('/vfo/switch', 'POST'); setTimeout(updateAllStatus, 500); }
-        async function vfoCopy() { await apiCall('/vfo/copy', 'POST'); setTimeout(updateAllStatus, 500); }
+        function bandUp()    { send({ cmd: 'bandUp' }); }
+        function bandDown()  { send({ cmd: 'bandDown' }); }
+        function vfoSwitch() { send({ cmd: 'vfoSwitch' }); }
+        function vfoCopy()   { send({ cmd: 'vfoCopy' }); }
 
-        async function setPTT(state) {
+        function setPTT(state) {
             document.getElementById('pttBtn').classList.toggle('active', state);
             document.body.classList.toggle('tx-active', state);
             document.getElementById('title').textContent = state ? '[TX] Remote Radio Control' : 'Remote Radio Control';
-            await apiCall('/ptt', 'POST', { state: state ? 1 : 0 });
+            send({ cmd: 'setPTT', state: state ? 1 : 0 });
         }
 
-        async function toggleSplit() {
+        function toggleSplit() {
             splitState = !splitState;
-            await apiCall('/split', 'POST', { state: splitState ? 1 : 0, vfo: splitState ? 'VFOB' : 'VFOA' });
+            send({ cmd: 'setSplit', state: splitState ? 1 : 0, vfo: splitState ? 'VFOB' : 'VFOA' });
             document.getElementById('splitBtn').classList.toggle('btn-active', splitState);
         }
 
-        async function setLevel(level, value) {
-            await apiCall(`/level/${level}`, 'POST', { value });
-            if (level === 'AF') document.getElementById('volValue').textContent = Math.round(value * 100);
+        function setLevel(level, value) {
+            send({ cmd: 'setLevel', level, value });
+            if (level === 'AF')  document.getElementById('volValue').textContent = Math.round(value * 100);
             else if (level === 'SQL') document.getElementById('sqlValue').textContent = Math.round(value * 100);
         }
 
-        async function toggleFunc(func) {
+        function toggleFunc(func) {
             const btn = document.getElementById(func.toLowerCase() + 'Btn');
-            await apiCall(`/func/${func}`, 'POST', { value: btn.classList.contains('btn-active') ? 0 : 1 });
+            send({ cmd: 'setFunc', func, value: btn.classList.contains('btn-active') ? 0 : 1 });
             btn.classList.toggle('btn-active');
         }
 
-        async function toggleLevel(level, value) {
+        function toggleLevel(level, value) {
             const id = level.toLowerCase().replace('preamp', 'ipo') + 'Btn';
             const btn = document.getElementById(id);
-            await apiCall(`/level/${level}`, 'POST', { value: btn.classList.contains('btn-active') ? 0 : value });
+            send({ cmd: 'setLevel', level, value: btn.classList.contains('btn-active') ? 0 : value });
             btn.classList.toggle('btn-active');
         }
 
