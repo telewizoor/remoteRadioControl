@@ -5,3 +5,6 @@ soundfile
 websocket
 websocket-client
 numpy
+aiohttp
+av
+aiortc

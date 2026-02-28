@@ -37,6 +37,7 @@
     "filter_width_cwr_normal": 500,
     "filter_width_cwr_wide": 2400,
     "stay_on_top": false,
-    "waterfall_margin": 32,
-    "active_config": "C:/Project/remoteRadioControl/remoteControl/ft450d.json"
+    "audio_input_device": null,
+    "audio_output_device": null,
+    "waterfall_margin": 32
 }
