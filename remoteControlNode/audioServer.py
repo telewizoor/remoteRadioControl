@@ -40,6 +40,8 @@ _lock          = threading.Lock()
 _capture_subs  = []   # lista kolejek aktywnych RadioTrack
 _playback_q    = queue.Queue(maxsize=100)
 _audio_stream  = None
+_active_mics   = 0            # licznik aktywnych MicSink — gdy spadnie do 0 resetuj prefill
+
 # Buforowanie odtwarzania — analogicznie jak w kliencie Python
 PLAYBACK_PREFILL  = 3       # bloki do zbuforowania zanim zaczniemy grać
 PLAYBACK_FADE_LEN = 256     # próbki fade-out przy underrun
@@ -175,8 +177,12 @@ class RadioTrack(MediaStreamTrack):
 class MicSink:
 
     def __init__(self):
+        global _active_mics
         self._resampler = av.AudioResampler(format="fltp", layout="mono", rate=SAMPLE_RATE)
         self._active    = True
+        with _lock:
+            _active_mics += 1
+        log.info("MicSink: nowy (aktywne: %d)", _active_mics)
 
     def addTrack(self, track):
         asyncio.ensure_future(self._run(track))
@@ -210,13 +216,18 @@ class MicSink:
                 break
 
     def stop(self):
-        global _pb_prefilled
+        global _pb_prefilled, _active_mics
         self._active = False
-        _pb_prefilled = False          # resetuj prefill — następne połączenie zacznie od buforowania
-        # Wyczyść playback queue żeby nie było starych danych
-        while not _playback_q.empty():
-            try: _playback_q.get_nowait()
-            except: break
+        with _lock:
+            _active_mics = max(0, _active_mics - 1)
+            remaining = _active_mics
+        log.info("MicSink: stop (pozostało: %d)", remaining)
+        # Resetuj prefill i wyczyść kolejkę tylko gdy ostatni klient się rozłączył
+        if remaining == 0:
+            _pb_prefilled = False
+            while not _playback_q.empty():
+                try: _playback_q.get_nowait()
+                except: break
 
 
 # ─────────────────────────────────────────────────────────────
@@ -226,12 +237,6 @@ class MicSink:
 async def offer(request):
     params    = await request.json()
     offer_sdp = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
-
-    # Zamknij wszystkie poprzednie połączenia — tylko jedno aktywne naraz
-    for old_pc in list(pcs):
-        log.info("Zamykam stare połączenie przed nowym")
-        await old_pc.close()
-    pcs.clear()
 
     pc = RTCPeerConnection()
     pcs.add(pc)
