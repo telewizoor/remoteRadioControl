@@ -526,6 +526,7 @@
         // ── WebRTC Audio ──────────────────────────────────────────
         let pc = null;
         let localStream = null;
+        let audioContext = null;   // Web Audio API — omija przetwarzanie przeglądarki (AGC)
 
         async function toggleAudio() {
             if (pc) { disconnectAudio(); } else { await connectAudio(); }
@@ -568,9 +569,15 @@
                 } catch (micErr) {
                     // exact:false może być odrzucone jeśli iOS nie potrafi spełnić —
                     // fallback do prostej prośby bez ograniczeń
-                    console.warn('Mic exact constraints failed, retrying plain:', micErr.message);
+                    console.warn('Mic exact constraints failed, retrying with ideal:', micErr.message);
                     try {
-                        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        localStream = await navigator.mediaDevices.getUserMedia({
+                            audio: {
+                                echoCancellation: { ideal: false },
+                                noiseSuppression: { ideal: false },
+                                autoGainControl:  { ideal: false },
+                            }
+                        });
                         localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
                     } catch (micErr2) {
                         console.warn('Mikrofon niedostępny:', micErr2.message);
@@ -578,9 +585,29 @@
                 }
 
                 pc.ontrack = (evt) => {
-                    audioEl.srcObject = evt.streams[0];
-                    audioEl.muted = false;
-                    audioEl.play().catch(e => console.warn('play error:', e));
+                    // Odtwarzanie przez Web Audio API — omijamy AGC / normalizację
+                    // przeglądarki (szczególnie agresywną na iOS Safari)
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (AudioCtx && !audioContext) {
+                        try {
+                            audioContext = new AudioCtx({ sampleRate: 48000 });
+                            const src  = audioContext.createMediaStreamSource(evt.streams[0]);
+                            const gain = audioContext.createGain();
+                            gain.gain.value = 1.0;
+                            src.connect(gain);
+                            gain.connect(audioContext.destination);
+                            console.log('Audio via Web Audio API (AGC bypass)');
+                        } catch (e) {
+                            console.warn('Web Audio API failed, fallback to <audio>:', e);
+                            audioEl.srcObject = evt.streams[0];
+                            audioEl.muted = false;
+                            audioEl.play().catch(err => console.warn('play error:', err));
+                        }
+                    } else {
+                        audioEl.srcObject = evt.streams[0];
+                        audioEl.muted = false;
+                        audioEl.play().catch(e => console.warn('play error:', e));
+                    }
                 };
 
                 pc.oniceconnectionstatechange = () => {
@@ -630,6 +657,7 @@
         }
 
         function disconnectAudio() {
+            if (audioContext) { audioContext.close().catch(() => {}); audioContext = null; }
             if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
             if (pc) { pc.close(); pc = null; }
             const audioEl = document.getElementById('radioAudio');

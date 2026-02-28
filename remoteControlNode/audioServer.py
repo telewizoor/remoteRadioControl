@@ -40,7 +40,13 @@ _lock          = threading.Lock()
 _capture_subs  = []   # lista kolejek aktywnych RadioTrack
 _playback_q    = queue.Queue(maxsize=100)
 _audio_stream  = None
+# Buforowanie odtwarzania — analogicznie jak w kliencie Python
+PLAYBACK_PREFILL  = 3       # bloki do zbuforowania zanim zaczniemy grać
+PLAYBACK_FADE_LEN = 256     # próbki fade-out przy underrun
 
+_pb_prefilled = False
+_pb_last      = np.zeros(BLOCK_SIZE, dtype=np.float32)
+_pb_fade_win  = np.linspace(1.0, 0.0, PLAYBACK_FADE_LEN, dtype=np.float32)
 
 def _safe_async_put(aq, block):
     """Wywoływane w event loop przez call_soon_threadsafe — łapie QueueFull."""
@@ -51,6 +57,8 @@ def _safe_async_put(aq, block):
 
 
 def _audio_callback(indata, outdata, frames, time_info, status):
+    global _pb_prefilled
+
     if status:
         log.warning("audio: %s", status)
 
@@ -63,14 +71,29 @@ def _audio_callback(indata, outdata, frames, time_info, status):
             except Exception:
                 pass
 
-    # Playback
+    # Playback — prefill + fade-out (jak w kliencie Python)
+    if not _pb_prefilled:
+        if _playback_q.qsize() >= PLAYBACK_PREFILL:
+            _pb_prefilled = True
+        else:
+            outdata[:, 0] = 0.0
+            return
+
     try:
         chunk = _playback_q.get_nowait()
         if len(chunk) < frames:
             chunk = np.pad(chunk, (0, frames - len(chunk)))
-        outdata[:, 0] = chunk[:frames].astype(np.float32)
+        samples = chunk[:frames].astype(np.float32)
+        _pb_last[:frames] = samples
+        outdata[:, 0] = samples
     except queue.Empty:
-        outdata[:, 0] = np.zeros(frames, dtype=np.float32)
+        # Łagodne wygaszenie zamiast skoku do zera — eliminuje trzaski
+        fade = _pb_last.copy()
+        apply_len = min(PLAYBACK_FADE_LEN, frames)
+        fade[:apply_len] *= _pb_fade_win[:apply_len]
+        fade[apply_len:]  = 0.0
+        _pb_last[:]       = 0.0
+        outdata[:, 0]     = fade[:frames]
 
 
 def _start_audio(device_index: int):
@@ -171,7 +194,12 @@ class MicSink:
                     try:
                         _playback_q.put_nowait(samples)
                     except queue.Full:
-                        pass
+                        # Wyrzuca najstarszą ramkę żeby zrobić miejsce
+                        try:
+                            _playback_q.get_nowait()
+                        except queue.Empty:
+                            pass
+                        _playback_q.put_nowait(samples)
 
                 if cnt % 200 == 1:
                     log.info("RX mic #%d rate=%d fmt=%s samples=%d pq=%d",
@@ -182,7 +210,9 @@ class MicSink:
                 break
 
     def stop(self):
+        global _pb_prefilled
         self._active = False
+        _pb_prefilled = False          # resetuj prefill — następne połączenie zacznie od buforowania
         # Wyczyść playback queue żeby nie było starych danych
         while not _playback_q.empty():
             try: _playback_q.get_nowait()

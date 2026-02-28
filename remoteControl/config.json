@@ -37,7 +37,7 @@
     "filter_width_cwr_normal": 500,
     "filter_width_cwr_wide": 2400,
     "stay_on_top": false,
-    "audio_input_device": null,
+    "audio_input_device": 2,
     "audio_output_device": null,
     "waterfall_margin": 32
 }
