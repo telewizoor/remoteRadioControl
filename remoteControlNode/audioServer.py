@@ -21,6 +21,25 @@ from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 import aiohttp_cors
 
+# ── Monkey-patch: Opus bitrate ────────────────────────────────
+# aiortc hardkoduje bit_rate=96000 i ignoruje SDP fmtp / setParameters()
+# (issue #1393). Jedyne pewne rozwiązanie to podmiana klasy enkodra.
+OPUS_BITRATE = 16_000   # 16 kbps — więcej niż dość na SSB 3 kHz voice
+
+import aiortc.codecs.opus as _opus_mod
+import aiortc.codecs as _codecs_mod
+
+_OrigOpusEncoder = _opus_mod.OpusEncoder
+
+class _LowBitrateOpusEncoder(_OrigOpusEncoder):
+    def __init__(self):
+        super().__init__()
+        self.codec.bit_rate = OPUS_BITRATE
+
+_opus_mod.OpusEncoder = _LowBitrateOpusEncoder
+_codecs_mod.OpusEncoder = _LowBitrateOpusEncoder
+# ─────────────────────────────────────────────────────────────
+
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("radio")
 
