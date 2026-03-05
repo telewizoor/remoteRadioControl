@@ -57,14 +57,14 @@ KEY_FILE  = "key.pem"
 # ── Globalny audio engine ────────────────────────────────────
 _lock          = threading.Lock()
 _capture_subs  = []   # lista kolejek aktywnych RadioTrack
-_playback_q    = queue.Queue(maxsize=8)   # 160 ms max (było 100=2s!)
+_playback_q    = queue.Queue(maxsize=20)   # 160 ms max (było 100=2s!)
 _audio_stream  = None
 _active_mics   = 0            # licznik aktywnych MicSink — gdy spadnie do 0 resetuj prefill
 
 # Buforowanie odtwarzania — analogicznie jak w kliencie Python
-PLAYBACK_PREFILL  = 1       # 1 blok = 20 ms (było 3=60ms)
+PLAYBACK_PREFILL  = 3       # 1 blok = 20 ms (było 3=60ms)
 PLAYBACK_FADE_LEN = 256     # próbki fade-out przy underrun
-PLAYBACK_DRAIN_THRESHOLD = 4  # powyżej tej ilości bloków w kolejce → skipuj najstarsze
+PLAYBACK_DRAIN_THRESHOLD = 20  # powyżej tej ilości bloków w kolejce → skipuj najstarsze
 
 _pb_prefilled = False
 _pb_last      = np.zeros(BLOCK_SIZE, dtype=np.float32)

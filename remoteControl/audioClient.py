@@ -56,13 +56,13 @@ SAMPLE_TIME = 20
 BLOCK_SIZE  = SD_RATE * SAMPLE_TIME // 1000   # 960 próbek = 20 ms
 
 # Rozmiar kolejki odbioru: ~100 ms bufora jitter.
-RX_QUEUE_SIZE = 5
+RX_QUEUE_SIZE = 20
 
 # Ile próbek wstępnie buforować zanim zacznie wychodzić dźwięk (1 blok = 20 ms).
-RX_PREFILL = 1
+RX_PREFILL = 3
 
 # Próg adaptive drain — powyżej skipujemy najstarsze ramki
-RX_DRAIN_THRESHOLD = 3
+RX_DRAIN_THRESHOLD = 20
 
 # Długość fade-out przy underrun (próbki). Zamiast skoku do zera stosujemy
 # krótkie wygaszenie, co eliminuje "klik".
@@ -176,13 +176,28 @@ class MicTrack(MediaStreamTrack):
         t = threading.Thread(target=self._sd_thread, daemon=True)
         t.start()
 
+    def _safe_mic_put(self, chunk):
+        """Wywoływane w event loop przez call_soon_threadsafe — łapie QueueFull."""
+        try:
+            self._async_q.put_nowait(chunk)
+        except asyncio.QueueFull:
+            # Wyrzuć najstarszą ramkę i wstaw nową
+            try:
+                self._async_q.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self._async_q.put_nowait(chunk)
+            except asyncio.QueueFull:
+                pass
+
     def _sd_thread(self):
         def callback(indata, frames, time_info, status):
             chunk = (indata[:, 0] * 32767).clip(-32768, 32767).astype(np.int16).copy()
             try:
-                self._loop.call_soon_threadsafe(self._async_q.put_nowait, chunk)
-            except Exception:
-                pass   # QueueFull lub loop zamknięty
+                self._loop.call_soon_threadsafe(self._safe_mic_put, chunk)
+            except RuntimeError:
+                pass   # loop zamknięty
 
         kwargs = dict(samplerate=SD_RATE, channels=1, dtype="float32",
                       blocksize=BLOCK_SIZE, latency='low', callback=callback)
