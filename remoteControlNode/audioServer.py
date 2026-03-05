@@ -24,7 +24,7 @@ import aiohttp_cors
 # ── Monkey-patch: Opus bitrate ────────────────────────────────
 # aiortc hardkoduje bit_rate=96000 i ignoruje SDP fmtp / setParameters()
 # (issue #1393). Jedyne pewne rozwiązanie to podmiana klasy enkodra.
-OPUS_BITRATE = 16_000   # 16 kbps — więcej niż dość na SSB 3 kHz voice
+OPUS_BITRATE = 32_000   # 32 kbps — niższy codec delay niż 16k, wciąż oszczędne
 
 import aiortc.codecs.opus as _opus_mod
 import aiortc.codecs as _codecs_mod
@@ -57,13 +57,14 @@ KEY_FILE  = "key.pem"
 # ── Globalny audio engine ────────────────────────────────────
 _lock          = threading.Lock()
 _capture_subs  = []   # lista kolejek aktywnych RadioTrack
-_playback_q    = queue.Queue(maxsize=100)
+_playback_q    = queue.Queue(maxsize=8)   # 160 ms max (było 100=2s!)
 _audio_stream  = None
 _active_mics   = 0            # licznik aktywnych MicSink — gdy spadnie do 0 resetuj prefill
 
 # Buforowanie odtwarzania — analogicznie jak w kliencie Python
-PLAYBACK_PREFILL  = 3       # bloki do zbuforowania zanim zaczniemy grać
+PLAYBACK_PREFILL  = 1       # 1 blok = 20 ms (było 3=60ms)
 PLAYBACK_FADE_LEN = 256     # próbki fade-out przy underrun
+PLAYBACK_DRAIN_THRESHOLD = 4  # powyżej tej ilości bloków w kolejce → skipuj najstarsze
 
 _pb_prefilled = False
 _pb_last      = np.zeros(BLOCK_SIZE, dtype=np.float32)
@@ -92,13 +93,21 @@ def _audio_callback(indata, outdata, frames, time_info, status):
             except Exception:
                 pass
 
-    # Playback — prefill + fade-out (jak w kliencie Python)
+    # Playback — prefill + adaptive drain + fade-out
     if not _pb_prefilled:
         if _playback_q.qsize() >= PLAYBACK_PREFILL:
             _pb_prefilled = True
         else:
             outdata[:, 0] = 0.0
             return
+
+    # Adaptive drain: jeśli kolejka rośnie ponad próg, wyrzucaj najstarsze
+    # żeby opóźnienie nie kumulowało się w nieskończoność
+    while _playback_q.qsize() > PLAYBACK_DRAIN_THRESHOLD:
+        try:
+            _playback_q.get_nowait()
+        except queue.Empty:
+            break
 
     try:
         chunk = _playback_q.get_nowait()
@@ -125,6 +134,7 @@ def _start_audio(device_index: int):
         channels=(CHANNELS, CHANNELS),
         dtype=("int16", "float32"),
         blocksize=BLOCK_SIZE,
+        latency='low',
         callback=_audio_callback,
     )
     _audio_stream.start()
@@ -153,7 +163,7 @@ class RadioTrack(MediaStreamTrack):
     def __init__(self):
         super().__init__()
         self._loop      = asyncio.get_event_loop()
-        self._async_q   = asyncio.Queue(maxsize=50)
+        self._async_q   = asyncio.Queue(maxsize=8)   # 160 ms max (było 50=1s!)
         self._pts       = 0
         self._time_base = fractions.Fraction(1, SAMPLE_RATE)
         self._cnt       = 0
@@ -165,6 +175,13 @@ class RadioTrack(MediaStreamTrack):
     async def recv(self):
         # Czyste await na asyncio.Queue — żadnych wątków executor, możliwe do anulowania
         samples = await self._async_q.get()
+
+        # Adaptive drain: jeśli kolejka rośnie, wyrzuć stare ramki
+        while self._async_q.qsize() > 3:
+            try:
+                samples = self._async_q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
         self._cnt += 1
         if self._cnt % 200 == 1:

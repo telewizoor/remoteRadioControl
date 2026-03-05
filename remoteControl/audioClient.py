@@ -29,7 +29,7 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 # ── Monkey-patch: Opus bitrate ────────────────────────────────
 # aiortc hardkoduje bit_rate=96000 i ignoruje SDP fmtp / setParameters()
 # (issue #1393). Jedyne pewne rozwiązanie to podmiana klasy enkodra.
-OPUS_BITRATE = 16_000   # 16 kbps — więcej niż dość na SSB 3 kHz voice
+OPUS_BITRATE = 32_000   # 32 kbps — niższy codec delay niż 16k, wciąż oszczędne
 
 import aiortc.codecs.opus as _opus_mod
 import aiortc.codecs as _codecs_mod
@@ -55,12 +55,14 @@ SD_RATE     = 48000
 SAMPLE_TIME = 20
 BLOCK_SIZE  = SD_RATE * SAMPLE_TIME // 1000   # 960 próbek = 20 ms
 
-# Rozmiar kolejki odbioru: ~300 ms bufora jitter. Przy maxsize=3 (60 ms) każde
-# chwilowe opóźnienie sieci powoduje underrun → skok do zera → trzask.
-RX_QUEUE_SIZE = 10
+# Rozmiar kolejki odbioru: ~100 ms bufora jitter.
+RX_QUEUE_SIZE = 5
 
-# Ile próbek wstępnie buforować zanim zacznie wychodzić dźwięk (2 bloki = 40 ms).
-RX_PREFILL = 2
+# Ile próbek wstępnie buforować zanim zacznie wychodzić dźwięk (1 blok = 20 ms).
+RX_PREFILL = 1
+
+# Próg adaptive drain — powyżej skipujemy najstarsze ramki
+RX_DRAIN_THRESHOLD = 3
 
 # Długość fade-out przy underrun (próbki). Zamiast skoku do zera stosujemy
 # krótkie wygaszenie, co eliminuje "klik".
@@ -96,6 +98,13 @@ class RadioPlayer:
                     outdata[:, 0] = 0.0
                     return
 
+            # Adaptive drain: jeśli kolejka rośnie ponad próg, wyrzucaj najstarsze
+            while self._sync_q.qsize() > RX_DRAIN_THRESHOLD:
+                try:
+                    self._sync_q.get_nowait()
+                except queue.Empty:
+                    break
+
             try:
                 chunk = self._sync_q.get_nowait()
                 if len(chunk) < frames:
@@ -112,7 +121,7 @@ class RadioPlayer:
                 outdata[:, 0] = fade[:frames]
 
         kwargs = dict(samplerate=SD_RATE, channels=1, dtype="float32",
-                      blocksize=BLOCK_SIZE, callback=callback)
+                      blocksize=BLOCK_SIZE, latency='low', callback=callback)
         if self._device is not None:
             kwargs["device"] = self._device
 
@@ -156,11 +165,14 @@ class MicTrack(MediaStreamTrack):
     def __init__(self, device):
         super().__init__()
         self._device    = device
-        self._sync_q    = queue.Queue(maxsize=6)
+        self._loop      = None
+        self._async_q   = None     # asyncio.Queue — tworzona w start_capture
         self._pts       = 0
         self._time_base = fractions.Fraction(1, SD_RATE)
 
     def start_capture(self):
+        self._loop    = asyncio.get_event_loop()
+        self._async_q = asyncio.Queue(maxsize=4)   # 80 ms max
         t = threading.Thread(target=self._sd_thread, daemon=True)
         t.start()
 
@@ -168,17 +180,12 @@ class MicTrack(MediaStreamTrack):
         def callback(indata, frames, time_info, status):
             chunk = (indata[:, 0] * 32767).clip(-32768, 32767).astype(np.int16).copy()
             try:
-                self._sync_q.put_nowait(chunk)
-            except queue.Full:
-                # Zamiast cicho upuścić ramkę, wyrzuć najstarszą
-                try:
-                    self._sync_q.get_nowait()
-                except queue.Empty:
-                    pass
-                self._sync_q.put_nowait(chunk)
+                self._loop.call_soon_threadsafe(self._async_q.put_nowait, chunk)
+            except Exception:
+                pass   # QueueFull lub loop zamknięty
 
         kwargs = dict(samplerate=SD_RATE, channels=1, dtype="float32",
-                      blocksize=BLOCK_SIZE, callback=callback)
+                      blocksize=BLOCK_SIZE, latency='low', callback=callback)
         if self._device is not None:
             kwargs["device"] = self._device
 
@@ -188,8 +195,14 @@ class MicTrack(MediaStreamTrack):
                 time.sleep(1)
 
     async def recv(self):
-        loop = asyncio.get_event_loop()
-        chunk = await loop.run_in_executor(None, self._sync_q.get)
+        chunk = await self._async_q.get()
+
+        # Adaptive drain — jeśli kolejka urosła, weź najnowszą ramkę
+        while self._async_q.qsize() > 1:
+            try:
+                chunk = self._async_q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
         frame            = av.AudioFrame.from_ndarray(chunk.reshape(1, -1), format="s16", layout="mono")
         frame.sample_rate = SD_RATE

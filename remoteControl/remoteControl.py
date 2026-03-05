@@ -1748,7 +1748,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             windowHeight = 200
 
-        self.setGeometry(int((sizeObject.width() - windowWidth) / 2), sizeObject.height() - windowHeight - 48, windowWidth, windowHeight)
+        self.setGeometry(20, sizeObject.height() - windowHeight - 48, windowWidth, windowHeight)
 
         # Stay on top based on config
         if config.get('stay_on_top', False):
