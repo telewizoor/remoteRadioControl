@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-WebRTC Audio Bridge — FT-450D
-- Jeden globalny sd.Stream duplex (karta nigdy nie zajęta podwójnie)
-- Każde połączenie ma własną kolejkę capture (brak cross-contamination)
+WebRTC Audio Bridge
+- One global sd.Stream duplex (device never occupied twice)
+- Each connection has its own capture queue (no cross-contamination)
 - HTTPS self-signed
 """
 
@@ -22,9 +22,9 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 import aiohttp_cors
 
 # ── Monkey-patch: Opus bitrate ────────────────────────────────
-# aiortc hardkoduje bit_rate=96000 i ignoruje SDP fmtp / setParameters()
-# (issue #1393). Jedyne pewne rozwiązanie to podmiana klasy enkodra.
-OPUS_BITRATE = 32_000   # 32 kbps — niższy codec delay niż 16k, wciąż oszczędne
+# aiortc hardcodes bit_rate=96000 and ignores SDP fmtp / setParameters()
+# (issue #1393). The only reliable solution is to replace the encoder class.
+OPUS_BITRATE = 32_000   # 32 kbps — lower codec delay than 16k, still efficient
 
 import aiortc.codecs.opus as _opus_mod
 import aiortc.codecs as _codecs_mod
@@ -54,24 +54,24 @@ PORT      = 8443
 CERT_FILE = "cert.pem"
 KEY_FILE  = "key.pem"
 
-# ── Globalny audio engine ────────────────────────────────────
+# ── Global audio engine ────────────────────────────────────
 _lock          = threading.Lock()
-_capture_subs  = []   # lista kolejek aktywnych RadioTrack
-_playback_q    = queue.Queue(maxsize=20)   # 160 ms max (było 100=2s!)
+_capture_subs  = []   # list of queues for active RadioTrack
+_playback_q    = queue.Queue(maxsize=20)   # 160 ms max (was 100=2s!)
 _audio_stream  = None
-_active_mics   = 0            # licznik aktywnych MicSink — gdy spadnie do 0 resetuj prefill
+_active_mics   = 0            # counter of active MicSink — when it drops to 0, reset prefill
 
-# Buforowanie odtwarzania — analogicznie jak w kliencie Python
-PLAYBACK_PREFILL  = 3       # 1 blok = 20 ms (było 3=60ms)
-PLAYBACK_FADE_LEN = 256     # próbki fade-out przy underrun
-PLAYBACK_DRAIN_THRESHOLD = 20  # powyżej tej ilości bloków w kolejce → skipuj najstarsze
+# Playback buffering — similar to the Python client
+PLAYBACK_PREFILL  = 3       # 1 block = 20 ms (was 3=60ms)
+PLAYBACK_FADE_LEN = 256     # fade-out samples on underrun
+PLAYBACK_DRAIN_THRESHOLD = 20  # above this number of blocks in the queue → skip the oldest
 
 _pb_prefilled = False
 _pb_last      = np.zeros(BLOCK_SIZE, dtype=np.float32)
 _pb_fade_win  = np.linspace(1.0, 0.0, PLAYBACK_FADE_LEN, dtype=np.float32)
 
 def _safe_async_put(aq, block):
-    """Wywoływane w event loop przez call_soon_threadsafe — łapie QueueFull."""
+    """Called in the event loop via call_soon_threadsafe — catches QueueFull."""
     try:
         aq.put_nowait(block)
     except asyncio.QueueFull:
@@ -84,7 +84,7 @@ def _audio_callback(indata, outdata, frames, time_info, status):
     if status:
         log.warning("audio: %s", status)
 
-    # Broadcast capture do wszystkich aktywnych połączeń
+    # Broadcast capture to all active connections
     block = indata[:, 0].copy()
     with _lock:
         for (loop, aq) in _capture_subs:
@@ -101,8 +101,8 @@ def _audio_callback(indata, outdata, frames, time_info, status):
             outdata[:, 0] = 0.0
             return
 
-    # Adaptive drain: jeśli kolejka rośnie ponad próg, wyrzucaj najstarsze
-    # żeby opóźnienie nie kumulowało się w nieskończoność
+    # Adaptive drain: if the queue grows beyond the threshold, discard the oldest frames
+    # to prevent latency from accumulating indefinitely
     while _playback_q.qsize() > PLAYBACK_DRAIN_THRESHOLD:
         try:
             _playback_q.get_nowait()
@@ -117,7 +117,7 @@ def _audio_callback(indata, outdata, frames, time_info, status):
         _pb_last[:frames] = samples
         outdata[:, 0] = samples
     except queue.Empty:
-        # Łagodne wygaszenie zamiast skoku do zera — eliminuje trzaski
+        # Gentle fade-out instead of a hard drop to zero → no clicks
         fade = _pb_last.copy()
         apply_len = min(PLAYBACK_FADE_LEN, frames)
         fade[:apply_len] *= _pb_fade_win[:apply_len]
@@ -147,14 +147,14 @@ def _find_device() -> int:
             log.info("Device '%s' → idx=%d in=%d out=%d",
                      d['name'], i, d['max_input_channels'], d['max_output_channels'])
             return i
-    raise RuntimeError(f"Nie znaleziono '{DEVICE_NAME}'. Dostępne: {[d['name'] for d in sd.query_devices()]}")
+    raise RuntimeError(f"Device '{DEVICE_NAME}' not found. Available: {[d['name'] for d in sd.query_devices()]}")
 
 
 pcs = set()
 
 
 # ─────────────────────────────────────────────────────────────
-# NADAWANIE: własna kolejka capture → WebRTC
+# TRANSMITTING: own capture queue → WebRTC
 # ─────────────────────────────────────────────────────────────
 
 class RadioTrack(MediaStreamTrack):
@@ -163,20 +163,20 @@ class RadioTrack(MediaStreamTrack):
     def __init__(self):
         super().__init__()
         self._loop      = asyncio.get_event_loop()
-        self._async_q   = asyncio.Queue(maxsize=8)   # 160 ms max (było 50=1s!)
+        self._async_q   = asyncio.Queue(maxsize=8)   # 160 ms max (was 50=1s!)
         self._pts       = 0
         self._time_base = fractions.Fraction(1, SAMPLE_RATE)
         self._cnt       = 0
-        # Zarejestruj w loop+queue w broadcast liście
+        # Register in loop+queue in broadcast list
         with _lock:
             _capture_subs.append((self._loop, self._async_q))
-        log.info("RadioTrack: zarejestrowano (aktywne: %d)", len(_capture_subs))
+        log.info("RadioTrack: registered (active: %d)", len(_capture_subs))
 
     async def recv(self):
-        # Czyste await na asyncio.Queue — żadnych wątków executor, możliwe do anulowania
+        # Pure await on asyncio.Queue — no executor threads, cancellable
         samples = await self._async_q.get()
 
-        # Adaptive drain: jeśli kolejka rośnie, wyrzuć stare ramki
+        # Adaptive drain: if the queue grows, discard old frames
         while self._async_q.qsize() > 3:
             try:
                 samples = self._async_q.get_nowait()
@@ -197,17 +197,17 @@ class RadioTrack(MediaStreamTrack):
 
     def stop(self):
         super().stop()
-        # Wyrejestruj z broadcast listy
+        # Unregister from broadcast list
         with _lock:
             try:
                 _capture_subs.remove((self._loop, self._async_q))
             except ValueError:
                 pass
-        log.info("RadioTrack: wyrejestrowano (aktywne: %d)", len(_capture_subs))
+        log.info("RadioTrack: unregistered (active: %d)", len(_capture_subs))
 
 
 # ─────────────────────────────────────────────────────────────
-# ODBIERANIE: WebRTC mic → playback
+# RECEIVING: WebRTC mic → playback
 # ─────────────────────────────────────────────────────────────
 
 class MicSink:
@@ -218,7 +218,7 @@ class MicSink:
         self._active    = True
         with _lock:
             _active_mics += 1
-        log.info("MicSink: nowy (aktywne: %d)", _active_mics)
+        log.info("MicSink: new (active: %d)", _active_mics)
 
     def addTrack(self, track):
         asyncio.ensure_future(self._run(track))
@@ -230,13 +230,13 @@ class MicSink:
                 frame = await track.recv()
                 cnt += 1
 
-                # Resample synchronicznie — szybkie, nie blokuje długo, bez executor
+                # Resample synchronously — fast, doesn't block long, no executor
                 for of in self._resampler.resample(frame):
                     samples = np.frombuffer(bytes(of.planes[0]), dtype=np.float32).copy()
                     try:
                         _playback_q.put_nowait(samples)
                     except queue.Full:
-                        # Wyrzuca najstarszą ramkę żeby zrobić miejsce
+                        # Discard the oldest frame to make room
                         try:
                             _playback_q.get_nowait()
                         except queue.Empty:
@@ -248,7 +248,7 @@ class MicSink:
                              cnt, frame.sample_rate, frame.format.name,
                              frame.samples, _playback_q.qsize())
             except Exception as e:
-                log.warning("MicSink koniec: %s", e)
+                log.warning("MicSink ended: %s", e)
                 break
 
     def stop(self):
@@ -257,8 +257,8 @@ class MicSink:
         with _lock:
             _active_mics = max(0, _active_mics - 1)
             remaining = _active_mics
-        log.info("MicSink: stop (pozostało: %d)", remaining)
-        # Resetuj prefill i wyczyść kolejkę tylko gdy ostatni klient się rozłączył
+        log.info("MicSink: stop (remaining: %d)", remaining)
+        # Reset prefill and clear queue only when the last client disconnects
         if remaining == 0:
             _pb_prefilled = False
             while not _playback_q.empty():
@@ -293,7 +293,7 @@ async def offer(request):
     @pc.on("track")
     def on_track(track):
         if track.kind == "audio":
-            log.info("Mic odebrany → USB Audio Device")
+            log.info("Mic received → USB Audio Device")
             mic_sink.addTrack(track)
 
     await pc.setRemoteDescription(offer_sdp)
@@ -321,7 +321,7 @@ async def offer(request):
 
     await pc.setLocalDescription(answer)
 
-    # Czekaj na pełne zebranie kandydatów ICE (ważne dla ZeroTier / niestandardowych interfejsów)
+    # Wait for full ICE candidate gathering (important for ZeroTier / custom interfaces)
     if pc.iceGatheringState != "complete":
         gather_done = asyncio.Event()
 
@@ -334,15 +334,15 @@ async def offer(request):
         try:
             await asyncio.wait_for(gather_done.wait(), timeout=5.0)
         except asyncio.TimeoutError:
-            log.warning("ICE gathering timeout – wysyłam co jest")
+            log.warning("ICE gathering timeout – sending what we have")
 
-    log.info("ICE candidates w odpowiedzi:\n%s",
+    log.info("ICE candidates in response:\n%s",
              "\n".join(l for l in pc.localDescription.sdp.split("\n") if "candidate" in l))
 
     log.info("SENDERS: %s", pc.getSenders())
     log.info("RECEIVERS: %s", pc.getReceivers())
 
-    log.info("Nowe połączenie WebRTC [aktywne: %d]", len(pcs))
+    log.info("New WebRTC connection [active: %d]", len(pcs))
     return web.Response(
         content_type="application/json",
         text=json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}),
@@ -376,7 +376,7 @@ def build_app():
 
 
 if __name__ == "__main__":
-    log.info("Dostępne urządzenia audio:")
+    log.info("Available audio devices:")
     for i, d in enumerate(sd.query_devices()):
         log.info("  [%d] %s (in=%d out=%d)",
                  i, d['name'], d['max_input_channels'], d['max_output_channels'])
@@ -391,5 +391,5 @@ if __name__ == "__main__":
         )
     ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ssl_ctx.load_cert_chain(CERT_FILE, KEY_FILE)
-    log.info("Serwer: https://%s:%d | %dHz | '%s'", HOST, PORT, SAMPLE_RATE, DEVICE_NAME)
+    log.info("Server: https://%s:%d | %dHz | '%s'", HOST, PORT, SAMPLE_RATE, DEVICE_NAME)
     web.run_app(build_app(), host=HOST, port=PORT, ssl_context=ssl_ctx)
