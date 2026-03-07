@@ -1738,7 +1738,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Remote Control - FT‑450D")
+        self.setWindowTitle("Remote Radio Control")
 
         sizeObject = QtWidgets.QDesktopWidget().availableGeometry(-1)
         windowWidth = int(WINDOW_WIDTH_PERCENTAGE / 100 * sizeObject.width())
@@ -1748,7 +1748,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             windowHeight = 200
 
-        self.setGeometry(20, sizeObject.height() - windowHeight - 48, windowWidth, windowHeight)
+        self.setGeometry(12, sizeObject.height() - windowHeight - 48, windowWidth, windowHeight)
 
         # Stay on top based on config
         if config.get('stay_on_top', False):

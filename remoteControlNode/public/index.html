@@ -244,6 +244,7 @@
         let currentVFO = 'VFOA';
         let powerState = false;
         let splitState = false;
+        let isTx = false;
         let updateInterval = null;
 
         const filterWidths = {
@@ -278,6 +279,7 @@
         }
 
         async function updateAllStatus() {
+            // During TX only poll safe parameters (frequency, mode, power meter)
             const [freq, mode, vfo, power] = await Promise.all([
                 apiCall('/frequency'), apiCall('/mode'), apiCall('/vfo'), apiCall('/powerstat')
             ]);
@@ -285,6 +287,15 @@
             if (mode && !mode.error) { currentMode = mode.mode; if (mode.width) updateFilterFromWidth(mode.width); updateModeDisplay(); }
             if (vfo && !vfo.error) { currentVFO = vfo.vfo; document.getElementById('vfoIndicator').textContent = vfo.vfo; }
             if (power && !power.error) { powerState = power.power === 1; updatePowerDisplay(); }
+
+            if (isTx) {
+                // During TX: only read TX-relevant meters, skip RX-only queries
+                console.log('[POLL] TX mode – skipping RX-only queries');
+                const rfpow = await apiCall('/level/RFPOWER_METER');
+                if (rfpow && rfpow.value !== undefined) updatePoMeter(rfpow.value);
+                updateStatus('Connected [TX]', false);
+                return;
+            }
 
             const strength = await apiCall('/strength');
             if (strength) updateSMeter(strength.value);
@@ -492,10 +503,13 @@
         async function vfoCopy() { await apiCall('/vfo/copy', 'POST'); setTimeout(updateAllStatus, 500); }
 
         async function setPTT(state) {
+            isTx = state;
+            console.log(`[PTT] Setting TX state: ${state}`);
             document.getElementById('pttBtn').classList.toggle('active', state);
             document.body.classList.toggle('tx-active', state);
             document.getElementById('title').textContent = state ? '[TX] Remote Radio Control' : 'Remote Radio Control';
             await apiCall('/ptt', 'POST', { state: state ? 1 : 0 });
+            console.log(`[PTT] Command completed, isTx=${isTx}`);
         }
 
         async function toggleSplit() {

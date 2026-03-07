@@ -17,6 +17,9 @@ const ANTENNA_SWITCH_PORT = 5000;
 // Python WebRTC serwer (lokalnie na RPi)
 const PYTHON_SERVER = 'https://127.0.0.1:8443';
 
+// TX state tracking
+let isTx = false;
+
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -117,6 +120,10 @@ app.post('/api/frequency', async (req, res) => {
 });
 
 app.get('/api/vfo/:vfo', async (req, res) => {
+    if (isTx) {
+        console.log(`[TX-SKIP] Skipping VFO info read (isTx=${isTx})`);
+        return res.json({ frequency: 0, mode: 'USB', width: 2400, skipped: true });
+    }
     try {
         const result = await sendRigCommand(`\\get_vfo_info ${req.params.vfo.toUpperCase()}`);
         const freqMatch = result.match(/Freq: (-?\d+)/);
@@ -173,8 +180,22 @@ app.post('/api/vfo/copy', async (req, res) => {
 });
 
 app.post('/api/ptt', async (req, res) => {
-    try { await sendRigCommand(`T ${req.body.state}`); res.json({ success: true }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    const newState = parseInt(req.body.state);
+    console.log(`[PTT] Request: state=${newState}, previous isTx=${isTx}`);
+    try {
+        await sendRigCommand(`T ${newState}`);
+        isTx = newState === 1;
+        console.log(`[PTT] Command sent OK, isTx=${isTx}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error(`[PTT] Command FAILED: ${err.message}, isTx=${isTx}`);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// TX state endpoint – client checks this to skip unsafe queries during TX
+app.get('/api/tx-state', (req, res) => {
+    res.json({ tx: isTx });
 });
 
 app.post('/api/split', async (req, res) => {
@@ -183,10 +204,19 @@ app.post('/api/split', async (req, res) => {
 });
 
 app.get('/api/level/:level', async (req, res) => {
+    const level = req.params.level;
+    const TX_UNSAFE_LEVELS = ['STRENGTH', 'ATT', 'PREAMP', 'IF', 'NOTCHF', 'NR'];
+    if (isTx && TX_UNSAFE_LEVELS.includes(level)) {
+        console.log(`[TX-SKIP] Skipping level read: ${level} (isTx=${isTx})`);
+        return res.json({ value: 0, skipped: true });
+    }
     try {
-        const result = await sendRigCommand(`l ${req.params.level}`);
+        const result = await sendRigCommand(`l ${level}`);
         res.json({ value: parseFloat(result.split('\n')[0].trim()) });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        console.error(`[LEVEL] Error reading ${level}: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.post('/api/level/:level', async (req, res) => {
@@ -195,10 +225,19 @@ app.post('/api/level/:level', async (req, res) => {
 });
 
 app.get('/api/func/:func', async (req, res) => {
+    const func = req.params.func;
+    const TX_UNSAFE_FUNCS = ['TUNER', 'NB', 'MON', 'MN', 'NR'];
+    if (isTx && TX_UNSAFE_FUNCS.includes(func)) {
+        console.log(`[TX-SKIP] Skipping func read: ${func} (isTx=${isTx})`);
+        return res.json({ value: 0, skipped: true });
+    }
     try {
-        const result = await sendRigCommand(`u ${req.params.func}`);
+        const result = await sendRigCommand(`u ${func}`);
         res.json({ value: parseInt(result.split('\n')[0].trim()) });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        console.error(`[FUNC] Error reading ${func}: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.post('/api/func/:func', async (req, res) => {
@@ -207,6 +246,10 @@ app.post('/api/func/:func', async (req, res) => {
 });
 
 app.get('/api/strength', async (req, res) => {
+    if (isTx) {
+        console.log(`[TX-SKIP] Skipping STRENGTH read (isTx=${isTx})`);
+        return res.json({ value: 0, skipped: true });
+    }
     try {
         const result = await sendRigCommand('l STRENGTH');
         res.json({ value: parseInt(result.split('\n')[0].trim()) });
