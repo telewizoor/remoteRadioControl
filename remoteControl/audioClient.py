@@ -26,30 +26,27 @@ import aiohttp
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 
-# ── Monkey-patch: Opus CBR encoder ────────────────────────────
-# aiortc hardcodes bit_rate=96000 VBR. Replace encoder to set CBR + bitrate
-# before codec.open() (options must be set before open).
-OPUS_BITRATE = 32_000   # 32 kbps CBR
+# ── Monkey-patch: Opus bitrate ────────────────────────────────
+# aiortc hardcodes bit_rate=96000 and ignores SDP fmtp / setParameters()
+OPUS_BITRATE = 32_000
 
 import aiortc.codecs.opus as _opus_mod
 import aiortc.codecs as _codecs_mod
 
 _OrigOpusEncoder = _opus_mod.OpusEncoder
 
-class _CbrOpusEncoder(_OrigOpusEncoder):
+class _PatchedOpusEncoder(_OrigOpusEncoder):
     def __init__(self):
-        # Override completely — must set options before codec.open()
         self.codec = av.CodecContext.create("libopus", "w")
         self.codec.sample_rate = 48000
         self.codec.channels = 2
         self.codec.format = av.AudioFormat("s16")
         self.codec.layout = "stereo"
         self.codec.bit_rate = OPUS_BITRATE
-        self.codec.options = {'vbr': 'off', 'application': 'voip'}
-        self.codec.open()
+        self.codec.open(options={'vbr': 'off'})
 
-_opus_mod.OpusEncoder = _CbrOpusEncoder
-_codecs_mod.OpusEncoder = _CbrOpusEncoder
+_opus_mod.OpusEncoder = _PatchedOpusEncoder
+_codecs_mod.OpusEncoder = _PatchedOpusEncoder
 # ─────────────────────────────────────────────────────────────
 
 # Logging — when used as a module, it doesn't output anything (NullHandler).
