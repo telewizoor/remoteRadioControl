@@ -37,13 +37,8 @@ _OrigOpusEncoder = _opus_mod.OpusEncoder
 
 class _PatchedOpusEncoder(_OrigOpusEncoder):
     def __init__(self):
-        self.codec = av.CodecContext.create("libopus", "w")
-        self.codec.sample_rate = 48000
-        self.codec.channels = 2
-        self.codec.format = av.AudioFormat("s16")
-        self.codec.layout = "stereo"
+        super().__init__()
         self.codec.bit_rate = OPUS_BITRATE
-        self.codec.open(options={'vbr': 'off'})
 
 _opus_mod.OpusEncoder = _PatchedOpusEncoder
 _codecs_mod.OpusEncoder = _PatchedOpusEncoder
