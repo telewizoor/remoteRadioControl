@@ -55,7 +55,7 @@ SAMPLE_TIME = 20
 BLOCK_SIZE  = SD_RATE * SAMPLE_TIME // 1000
 
 # RX queue size
-RX_QUEUE_SIZE = 50
+RX_QUEUE_SIZE = 24
 
 # How many blocks to prefill before starting playback (1 block = 20 ms).
 RX_PREFILL = 2

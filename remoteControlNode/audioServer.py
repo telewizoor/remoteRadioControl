@@ -57,12 +57,12 @@ KEY_FILE  = "key.pem"
 _lock            = threading.Lock()
 _capture_subs    = []     # mutable list, modified under _lock
 _capture_snap    = ()     # immutable tuple snapshot for lock-free callback
-_playback_q      = queue.Queue(maxsize=50)
+_playback_q      = queue.Queue(maxsize=24)
 _audio_stream    = None
 _active_mics     = 0      # counter of active MicSink
 
 # Playback buffering
-PLAYBACK_PREFILL         = 3    # blocks before starting playback (60 ms)
+PLAYBACK_PREFILL         = 2    # blocks before starting playback (60 ms)
 PLAYBACK_DRAIN_THRESHOLD = 30   # drain when queue exceeds this
 
 _pb_prefilled = False
