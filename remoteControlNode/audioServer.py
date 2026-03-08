@@ -21,23 +21,30 @@ from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 import aiohttp_cors
 
-# ── Monkey-patch: Opus bitrate ────────────────────────────────
-# aiortc hardcodes bit_rate=96000 and ignores SDP fmtp / setParameters()
-# (issue #1393). The only reliable solution is to replace the encoder class.
-OPUS_BITRATE = 32_000   # 32 kbps — lower codec delay than 16k, still efficient
+# ── Monkey-patch: Opus CBR encoder ────────────────────────────
+# aiortc hardcodes bit_rate=96000 VBR. Replace encoder to set CBR + bitrate
+# before codec.open() (options must be set before open).
+OPUS_BITRATE = 32_000   # 32 kbps CBR
 
 import aiortc.codecs.opus as _opus_mod
 import aiortc.codecs as _codecs_mod
 
 _OrigOpusEncoder = _opus_mod.OpusEncoder
 
-class _LowBitrateOpusEncoder(_OrigOpusEncoder):
+class _CbrOpusEncoder(_OrigOpusEncoder):
     def __init__(self):
-        super().__init__()
+        # Override completely — must set options before codec.open()
+        self.codec = av.CodecContext.create("libopus", "w")
+        self.codec.sample_rate = 48000
+        self.codec.channels = 2
+        self.codec.format = av.AudioFormat("s16")
+        self.codec.layout = "stereo"
         self.codec.bit_rate = OPUS_BITRATE
+        self.codec.options = {'vbr': 'off', 'application': 'voip'}
+        self.codec.open()
 
-_opus_mod.OpusEncoder = _LowBitrateOpusEncoder
-_codecs_mod.OpusEncoder = _LowBitrateOpusEncoder
+_opus_mod.OpusEncoder = _CbrOpusEncoder
+_codecs_mod.OpusEncoder = _CbrOpusEncoder
 # ─────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -55,20 +62,18 @@ CERT_FILE = "cert.pem"
 KEY_FILE  = "key.pem"
 
 # ── Global audio engine ────────────────────────────────────
-_lock          = threading.Lock()
-_capture_subs  = []   # list of queues for active RadioTrack
-_playback_q    = queue.Queue(maxsize=20)   # 160 ms max (was 100=2s!)
-_audio_stream  = None
-_active_mics   = 0            # counter of active MicSink — when it drops to 0, reset prefill
+_lock            = threading.Lock()
+_capture_subs    = []     # mutable list, modified under _lock
+_capture_snap    = ()     # immutable tuple snapshot for lock-free callback
+_playback_q      = queue.Queue(maxsize=50)
+_audio_stream    = None
+_active_mics     = 0      # counter of active MicSink
 
-# Playback buffering — similar to the Python client
-PLAYBACK_PREFILL  = 3       # 1 block = 20 ms (was 3=60ms)
-PLAYBACK_FADE_LEN = 256     # fade-out samples on underrun
-PLAYBACK_DRAIN_THRESHOLD = 20  # above this number of blocks in the queue → skip the oldest
+# Playback buffering
+PLAYBACK_PREFILL         = 3    # blocks before starting playback (60 ms)
+PLAYBACK_DRAIN_THRESHOLD = 30   # drain when queue exceeds this
 
 _pb_prefilled = False
-_pb_last      = np.zeros(BLOCK_SIZE, dtype=np.float32)
-_pb_fade_win  = np.linspace(1.0, 0.0, PLAYBACK_FADE_LEN, dtype=np.float32)
 
 def _safe_async_put(aq, block):
     """Called in the event loop via call_soon_threadsafe — catches QueueFull."""
@@ -84,16 +89,15 @@ def _audio_callback(indata, outdata, frames, time_info, status):
     if status:
         log.warning("audio: %s", status)
 
-    # Broadcast capture to all active connections
+    # ── Capture: broadcast to WebRTC clients (lock-free via snapshot) ──
     block = indata[:, 0].copy()
-    with _lock:
-        for (loop, aq) in _capture_subs:
-            try:
-                loop.call_soon_threadsafe(_safe_async_put, aq, block)
-            except Exception:
-                pass
+    for (loop, aq) in _capture_snap:    # tuple snapshot — no lock needed
+        try:
+            loop.call_soon_threadsafe(_safe_async_put, aq, block)
+        except Exception:
+            pass
 
-    # Playback — prefill + adaptive drain + fade-out
+    # ── Playback: feed USB audio device from mic queue ──
     if not _pb_prefilled:
         if _playback_q.qsize() >= PLAYBACK_PREFILL:
             _pb_prefilled = True
@@ -101,29 +105,23 @@ def _audio_callback(indata, outdata, frames, time_info, status):
             outdata[:, 0] = 0.0
             return
 
-    # Adaptive drain: if the queue grows beyond the threshold, discard the oldest frames
-    # to prevent latency from accumulating indefinitely
-    while _playback_q.qsize() > PLAYBACK_DRAIN_THRESHOLD:
+    # Drain excess — max 2 per callback to avoid large audio jumps
+    drained = 0
+    while _playback_q.qsize() > PLAYBACK_DRAIN_THRESHOLD and drained < 2:
         try:
             _playback_q.get_nowait()
+            drained += 1
         except queue.Empty:
             break
 
     try:
         chunk = _playback_q.get_nowait()
-        if len(chunk) < frames:
-            chunk = np.pad(chunk, (0, frames - len(chunk)))
-        samples = chunk[:frames].astype(np.float32)
-        _pb_last[:frames] = samples
-        outdata[:, 0] = samples
+        n = min(len(chunk), frames)
+        outdata[:n, 0] = chunk[:n]
+        if n < frames:
+            outdata[n:, 0] = 0.0
     except queue.Empty:
-        # Gentle fade-out instead of a hard drop to zero → no clicks
-        fade = _pb_last.copy()
-        apply_len = min(PLAYBACK_FADE_LEN, frames)
-        fade[:apply_len] *= _pb_fade_win[:apply_len]
-        fade[apply_len:]  = 0.0
-        _pb_last[:]       = 0.0
-        outdata[:, 0]     = fade[:frames]
+        outdata[:, 0] = 0.0
 
 
 def _start_audio(device_index: int):
@@ -167,9 +165,11 @@ class RadioTrack(MediaStreamTrack):
         self._pts       = 0
         self._time_base = fractions.Fraction(1, SAMPLE_RATE)
         self._cnt       = 0
-        # Register in loop+queue in broadcast list
+        # Register in broadcast list + update lock-free snapshot
+        global _capture_snap
         with _lock:
             _capture_subs.append((self._loop, self._async_q))
+            _capture_snap = tuple(_capture_subs)
         log.info("RadioTrack: registered (active: %d)", len(_capture_subs))
 
     async def recv(self):
@@ -197,12 +197,14 @@ class RadioTrack(MediaStreamTrack):
 
     def stop(self):
         super().stop()
-        # Unregister from broadcast list
+        # Unregister from broadcast list + update lock-free snapshot
+        global _capture_snap
         with _lock:
             try:
                 _capture_subs.remove((self._loop, self._async_q))
             except ValueError:
                 pass
+            _capture_snap = tuple(_capture_subs)
         log.info("RadioTrack: unregistered (active: %d)", len(_capture_subs))
 
 
@@ -236,12 +238,7 @@ class MicSink:
                     try:
                         _playback_q.put_nowait(samples)
                     except queue.Full:
-                        # Discard the oldest frame to make room
-                        try:
-                            _playback_q.get_nowait()
-                        except queue.Empty:
-                            pass
-                        _playback_q.put_nowait(samples)
+                        pass  # drop new frame — callback drain keeps latency bounded
 
                 if cnt % 200 == 1:
                     log.info("RX mic #%d rate=%d fmt=%s samples=%d pq=%d",

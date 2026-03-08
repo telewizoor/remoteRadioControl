@@ -26,23 +26,30 @@ import aiohttp
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 
-# ── Monkey-patch: Opus bitrate ────────────────────────────────
-# aiortc hardcodes bit_rate=96000 and ignores SDP fmtp / setParameters()
-# (issue #1393). The only reliable solution is to replace the encoder class.
-OPUS_BITRATE = 32_000   # 32 kbps — lower codec delay than 16k, still efficient
+# ── Monkey-patch: Opus CBR encoder ────────────────────────────
+# aiortc hardcodes bit_rate=96000 VBR. Replace encoder to set CBR + bitrate
+# before codec.open() (options must be set before open).
+OPUS_BITRATE = 32_000   # 32 kbps CBR
 
 import aiortc.codecs.opus as _opus_mod
 import aiortc.codecs as _codecs_mod
 
 _OrigOpusEncoder = _opus_mod.OpusEncoder
 
-class _LowBitrateOpusEncoder(_OrigOpusEncoder):
+class _CbrOpusEncoder(_OrigOpusEncoder):
     def __init__(self):
-        super().__init__()
+        # Override completely — must set options before codec.open()
+        self.codec = av.CodecContext.create("libopus", "w")
+        self.codec.sample_rate = 48000
+        self.codec.channels = 2
+        self.codec.format = av.AudioFormat("s16")
+        self.codec.layout = "stereo"
         self.codec.bit_rate = OPUS_BITRATE
+        self.codec.options = {'vbr': 'off', 'application': 'voip'}
+        self.codec.open()
 
-_opus_mod.OpusEncoder = _LowBitrateOpusEncoder
-_codecs_mod.OpusEncoder = _LowBitrateOpusEncoder
+_opus_mod.OpusEncoder = _CbrOpusEncoder
+_codecs_mod.OpusEncoder = _CbrOpusEncoder
 # ─────────────────────────────────────────────────────────────
 
 # Logging — when used as a module, it doesn't output anything (NullHandler).
@@ -56,16 +63,13 @@ SAMPLE_TIME = 20
 BLOCK_SIZE  = SD_RATE * SAMPLE_TIME // 1000
 
 # RX queue size
-RX_QUEUE_SIZE = 32
+RX_QUEUE_SIZE = 50
 
 # How many blocks to prefill before starting playback (1 block = 20 ms).
 RX_PREFILL = 2
 
 # Adaptive drain threshold — above this, we skip the oldest frames
-RX_DRAIN_THRESHOLD = 60
-
-# Fade-out length when underrun — instead of a hard drop to zero, we apply a short fade-out to avoid clicks.
-FADE_LEN = 256
+RX_DRAIN_THRESHOLD = 30
 
 # ─────────────────────────────────────────────────────────────
 # RECEIVING: WebRTC track → sounddevice output
@@ -78,9 +82,6 @@ class RadioPlayer:
         self._sync_q    = queue.Queue(maxsize=RX_QUEUE_SIZE)
         self._resampler = av.AudioResampler(format="s16", layout="mono", rate=SD_RATE)
         self._prefilled = False
-        # last played chunk — for fade-out on underrun
-        self._last      = np.zeros(BLOCK_SIZE, dtype=np.float32)
-        self._fade_win  = np.linspace(1.0, 0.0, FADE_LEN, dtype=np.float32)
 
     def start(self, loop):
         t = threading.Thread(target=self._sd_thread, daemon=True)
@@ -89,7 +90,6 @@ class RadioPlayer:
     def _sd_thread(self):
 
         def callback(outdata, frames, time_info, status):
-            # Wait for initial buffering to avoid immediate underruns.
             if not self._prefilled:
                 if self._sync_q.qsize() >= RX_PREFILL:
                     self._prefilled = True
@@ -97,27 +97,23 @@ class RadioPlayer:
                     outdata[:, 0] = 0.0
                     return
 
-            # Adaptive drain: if the queue grows beyond the threshold, discard the oldest frames
-            while self._sync_q.qsize() > RX_DRAIN_THRESHOLD:
+            # Drain excess — max 2 per callback to avoid large audio jumps
+            drained = 0
+            while self._sync_q.qsize() > RX_DRAIN_THRESHOLD and drained < 2:
                 try:
                     self._sync_q.get_nowait()
+                    drained += 1
                 except queue.Empty:
                     break
 
             try:
                 chunk = self._sync_q.get_nowait()
-                if len(chunk) < frames:
-                    chunk = np.pad(chunk, (0, frames - len(chunk)))
-                self._last[:] = chunk[:BLOCK_SIZE]
-                outdata[:, 0] = chunk[:frames]
+                n = min(len(chunk), frames)
+                outdata[:n, 0] = chunk[:n]
+                if n < frames:
+                    outdata[n:, 0] = 0.0
             except queue.Empty:
-                # Gentle fade-out instead of a hard drop to zero → no clicks
-                fade = self._last.copy()
-                apply = min(FADE_LEN, frames)
-                fade[:apply] *= self._fade_win[:apply]
-                fade[apply:]  = 0.0
-                self._last[:] = 0.0
-                outdata[:, 0] = fade[:frames]
+                outdata[:, 0] = 0.0
 
         kwargs = dict(samplerate=SD_RATE, channels=1, dtype="float32",
                       blocksize=BLOCK_SIZE, latency='low', callback=callback)
@@ -143,12 +139,7 @@ class RadioPlayer:
                     try:
                         self._sync_q.put_nowait(samples)
                     except queue.Full:
-                        # Queue full — discard the oldest buffer to make room
-                        try:
-                            self._sync_q.get_nowait()
-                        except queue.Empty:
-                            pass
-                        self._sync_q.put_nowait(samples)
+                        pass  # drop new frame — callback drain keeps latency bounded
             except Exception as e:
                 log.warning("RadioPlayer ended: %s", e)
                 break
