@@ -62,8 +62,6 @@ _audio_stream  = None
 _active_mics   = 0            # counter of active MicSink — when it drops to 0, reset prefill
 
 # Playback buffering — similar to the Python client
-CAPTURE_GAIN = 4.0  # amplify radio audio before sending to WebRTC (1.0 = no change)
-
 PLAYBACK_PREFILL  = 3       # 1 block = 20 ms (was 3=60ms)
 PLAYBACK_FADE_LEN = 256     # fade-out samples on underrun
 PLAYBACK_DRAIN_THRESHOLD = 20  # above this number of blocks in the queue → skip the oldest
@@ -86,10 +84,8 @@ def _audio_callback(indata, outdata, frames, time_info, status):
     if status:
         log.warning("audio: %s", status)
 
-    # Broadcast capture to all active connections — apply gain
-    block = indata[:, 0].astype(np.float32) * CAPTURE_GAIN
-    np.clip(block, -32768, 32767, out=block)
-    block = block.astype(np.int16)
+    # Broadcast capture to all active connections
+    block = indata[:, 0].copy()
     with _lock:
         for (loop, aq) in _capture_subs:
             try:
