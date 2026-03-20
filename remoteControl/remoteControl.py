@@ -1186,23 +1186,37 @@ class ImaAdpcmCodec:
         self.sync_buffer = np.zeros(4, dtype=np.uint8)
         self.sync_buffer_index = 0
     def decode(self, data):
-        output = np.zeros(len(data) * 2, dtype=np.int16)
-        for i, byte in enumerate(data):
-            output[i*2] = self.decode_nibble(byte & 0x0F)
-            output[i*2+1] = self.decode_nibble((byte >> 4) & 0x0F)
+        # Vectorized: extract all nibbles at once
+        arr = np.frombuffer(data, dtype=np.uint8)
+        nibbles = np.empty(len(arr) * 2, dtype=np.int32)
+        nibbles[0::2] = arr & 0x0F
+        nibbles[1::2] = (arr >> 4) & 0x0F
+        # Process sequentially but with less Python overhead
+        idx_table = ImaAdpcmCodec.ima_index_table
+        step_table = ImaAdpcmCodec.ima_step_table
+        output = np.empty(len(nibbles), dtype=np.int16)
+        step_index = self.step_index
+        predictor = self.predictor
+        step = self.step
+        for i in range(len(nibbles)):
+            nib = nibbles[i]
+            step_index += idx_table[nib]
+            if step_index < 0: step_index = 0
+            elif step_index > 88: step_index = 88
+            diff = step >> 3
+            if nib & 1: diff += step >> 2
+            if nib & 2: diff += step >> 1
+            if nib & 4: diff += step
+            if nib & 8: diff = -diff
+            predictor += diff
+            if predictor > 32767: predictor = 32767
+            elif predictor < -32768: predictor = -32768
+            output[i] = predictor
+            step = step_table[step_index]
+        self.step_index = step_index
+        self.predictor = predictor
+        self.step = step
         return output
-    def decode_nibble(self, nibble):
-        self.step_index += ImaAdpcmCodec.ima_index_table[nibble]
-        self.step_index = max(0, min(self.step_index, 88))
-        diff = self.step >> 3
-        if nibble & 1: diff += self.step >> 2
-        if nibble & 2: diff += self.step >> 1
-        if nibble & 4: diff += self.step
-        if nibble & 8: diff = -diff
-        self.predictor += diff
-        self.predictor = max(-32768, min(self.predictor, 32767))
-        self.step = ImaAdpcmCodec.ima_step_table[self.step_index]
-        return self.predictor
     
 def draw_line(data: np.ndarray, palette: np.ndarray, min_db=-120.0, max_db=-30.0, offset=0.0) -> np.ndarray:
     data_offset = data + offset
@@ -1235,6 +1249,12 @@ class WaterfallWidget(QtWidgets.QWidget):
         self.min_db = WATERFALL_MIN_DB_DEFAULT
         self.max_db = self.min_db + WATERFALL_DYNAMIC_RANGE
         self.fft_avg = 0
+
+        # FPS limiting
+        import time as _time
+        self._last_frame_time = 0.0
+        self._min_frame_interval = 1.0 / 20  # max ~20 FPS
+        self._time = _time
 
         # paleta
         self.palette = PALETTE.copy()
@@ -1397,7 +1417,7 @@ class WaterfallWidget(QtWidgets.QWidget):
             self._press_y = event.y()
 
     def mouseMoveEvent(self, event):
-        # hover - always update frequency and refresh immediately
+        # hover - update frequency and repaint
         freq = int(self._x_to_freq(event.x()))
         if freq != self.hover_freq:
             self.hover_freq = freq
@@ -1446,9 +1466,15 @@ class WaterfallWidget(QtWidgets.QWidget):
 
     @QtCore.pyqtSlot(np.ndarray)
     def push_row(self, fft_row):
+        # FPS limiting — drop frames if too fast
+        now = self._time.time()
+        if now - self._last_frame_time < self._min_frame_interval:
+            return
+        self._last_frame_time = now
+
         # zoom: select slice
         n = len(fft_row)
-        self.fft_avg = sum(fft_row) / n
+        self.fft_avg = np.mean(fft_row)
         visible_n = max(2, int(n * self.zoom_factor))
         center = int(self.center_pos * n)
         start = max(0, center - visible_n // 2)
@@ -1459,23 +1485,22 @@ class WaterfallWidget(QtWidgets.QWidget):
 
         # scale to widget width
         if fft_visible.size != self.width_px:
-            fft_visible = np.interp(np.linspace(0, len(fft_visible) - 1, self.width_px),
-                                    np.arange(len(fft_visible)),
-                                    fft_visible)
+            x_old = np.arange(len(fft_visible))
+            x_new = np.linspace(0, len(fft_visible) - 1, self.width_px)
+            fft_visible = np.interp(x_new, x_old, fft_visible)
 
         rgb_row = draw_line(fft_visible, self.palette, self.min_db, self.max_db)
 
         with self._lock:
-            # operate on our safe numpy buffer
+            # scroll buffer down by one row (only waterfall area)
             self._buffer[1+WATERFALL_MARGIN:] = self._buffer[WATERFALL_MARGIN:-1]
             self._buffer[WATERFALL_MARGIN] = rgb_row
 
-            # copy to QImage (includes bytesPerLine)
+            # copy to QImage
             ptr = self._image.bits()
             ptr.setsize(self._image.byteCount())
             bytes_per_line = self._image.bytesPerLine()
             arr2d = np.frombuffer(ptr, dtype=np.uint8).reshape((self.height_px, bytes_per_line))
-            # copy only RGB content (without padding)
             rgb_view = arr2d[:, :self.width_px * 3].reshape((self.height_px, self.width_px, 3))
             rgb_view[:, :] = self._buffer[:, :]
 
@@ -1511,12 +1536,14 @@ class WaterfallWidget(QtWidgets.QWidget):
             end_mhz = vis_end / 1e6
             start_tick = np.floor(start_mhz * 10) / 10
             end_tick = np.ceil(end_mhz * 10) / 10
+            inv_bw = 1.0 / bw if bw > 0 else 0
+            w_minus_1 = self.width_px - 1
 
             tick = start_tick
             while tick <= end_tick + 1e-9:
                 freq_hz = tick * 1e6
                 if vis_start <= freq_hz <= vis_end:
-                    x = int((freq_hz - vis_start) / bw * (self.width_px - 1))
+                    x = int((freq_hz - vis_start) * inv_bw * w_minus_1)
                     # major tick + label
                     painter.drawLine(x, WATERFALL_MARGIN - MAJOR_THICK_HEIGHT, x, WATERFALL_MARGIN)
                     text = f"{tick:.2f}"
@@ -1532,7 +1559,7 @@ class WaterfallWidget(QtWidgets.QWidget):
                             sub_freq_hz = sub_tick * 1e6
                             if sub_freq_hz >= vis_end:
                                 break
-                            x_sub = int((sub_freq_hz - vis_start) / bw * (self.width_px - 1))
+                            x_sub = int((sub_freq_hz - vis_start) * inv_bw * w_minus_1)
                             painter.drawLine(x_sub, WATERFALL_MARGIN - MINOR_TICK_HEIGHT, x_sub, WATERFALL_MARGIN)
                 tick += 0.05
 
@@ -1690,11 +1717,9 @@ class WsReceiver(threading.Thread, QtCore.QObject):
                     # decoding (assume waterfall_i16 -> dB style)
                 self.fft_codec.reset()
                 waterfall_i16 = self.fft_codec.decode(data)
-                waterfall_f32 = []
-                for i in range(len(waterfall_i16) - COMPRESS_FFT_PAD_N):
-                    waterfall_f32.append(waterfall_i16[i + COMPRESS_FFT_PAD_N] / 100.0)
+                waterfall_f32 = waterfall_i16[COMPRESS_FFT_PAD_N:].astype(np.float32) / 100.0
                 if not self._stop_event.is_set():
-                    self.push_row_signal.emit(np.array(waterfall_f32, dtype=np.float32))
+                    self.push_row_signal.emit(waterfall_f32)
 
         def on_error(ws, error):
             if not self._stop_event.is_set():
