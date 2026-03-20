@@ -72,7 +72,6 @@ class RadioPlayer:
     def __init__(self, device):
         self._device    = device
         self._sync_q    = queue.Queue(maxsize=RX_QUEUE_SIZE)
-        self._resampler = av.AudioResampler(format="s16", layout="mono", rate=SD_RATE)
         self._prefilled = False
 
     def start(self, loop):
@@ -125,13 +124,12 @@ class RadioPlayer:
         while True:
             try:
                 frame = await track.recv()
-                for f in self._resampler.resample(frame):
-                    raw     = np.frombuffer(bytes(f.planes[0]), dtype=np.int16)
-                    samples = raw.astype(np.float32) / 32768.0
-                    try:
-                        self._sync_q.put_nowait(samples)
-                    except queue.Full:
-                        pass  # drop new frame — callback drain keeps latency bounded
+                raw     = np.frombuffer(bytes(frame.planes[0]), dtype=np.int16)
+                samples = raw.astype(np.float32) / 32768.0
+                try:
+                    self._sync_q.put_nowait(samples)
+                except queue.Full:
+                    pass  # drop new frame — callback drain keeps latency bounded
             except Exception as e:
                 log.warning("RadioPlayer ended: %s", e)
                 break
