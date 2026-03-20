@@ -208,6 +208,7 @@ class MicSink:
 
     def __init__(self):
         global _active_mics
+        self._resampler = av.AudioResampler(format="fltp", layout="mono", rate=SAMPLE_RATE)
         self._active    = True
         with _lock:
             _active_mics += 1
@@ -223,12 +224,13 @@ class MicSink:
                 frame = await track.recv()
                 cnt += 1
 
-                raw = np.frombuffer(bytes(frame.planes[0]), dtype=np.int16)
-                samples = raw.astype(np.float32) / 32768.0
-                try:
-                    _playback_q.put_nowait(samples)
-                except queue.Full:
-                    pass  # drop new frame — callback drain keeps latency bounded
+                # Resample synchronously — fast, doesn't block long, no executor
+                for of in self._resampler.resample(frame):
+                    samples = np.frombuffer(bytes(of.planes[0]), dtype=np.float32).copy()
+                    try:
+                        _playback_q.put_nowait(samples)
+                    except queue.Full:
+                        pass  # drop new frame — callback drain keeps latency bounded
 
                 if cnt % 200 == 1:
                     log.info("RX mic #%d rate=%d fmt=%s samples=%d pq=%d",
