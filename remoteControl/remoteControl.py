@@ -1231,6 +1231,7 @@ class WaterfallWidget(QtWidgets.QWidget):
     freq_selected = QtCore.pyqtSignal(int)     # emitted when mouse moves (position)
     new_min_db = QtCore.pyqtSignal(int)
     adjust_waterfall = QtCore.pyqtSignal()
+    zoom_changed = QtCore.pyqtSignal(int)   # emitted when zoom_factor changes (value 5..100)
 
     def __init__(self, width=800, height=200, parent=None):
         super().__init__(parent)
@@ -1282,6 +1283,8 @@ class WaterfallWidget(QtWidgets.QWidget):
         self.initial_zoom_set = False
         self.fast_freq = False
 
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+
     def set_min_db(self, value):
         self.min_db = int(value)
 
@@ -1324,6 +1327,7 @@ class WaterfallWidget(QtWidgets.QWidget):
             self.zoom_factor = INITIAL_ZOOM
             # zoom limits
             self.zoom_factor = max(0.05, min(1.0, self.zoom_factor))
+            self.zoom_changed.emit(int(105 - self.zoom_factor * 100))
             # change view center to keep the same frequency under cursor
             if hasattr(self, "samp_rate") and self.samp_rate > 0:
                 full_bw = self.samp_rate
@@ -1344,20 +1348,14 @@ class WaterfallWidget(QtWidgets.QWidget):
 
     def resizeEvent(self, event):
         new_size = event.size()
-        self.width_px = new_size.width()
-        self.height_px = new_size.height()
-
-        # create new QImage and numpy buffer matched to new size
-        self._image = QtGui.QImage(self.width_px, self.height_px, QtGui.QImage.Format_RGB888)
-        self._image.fill(QtGui.QColor('black'))
-
         with self._lock:
+            self.width_px = new_size.width()
+            self.height_px = new_size.height()
+            self._image = QtGui.QImage(self.width_px, self.height_px, QtGui.QImage.Format_RGB888)
+            self._image.fill(QtGui.QColor('black'))
             self._buffer = np.zeros((self.height_px, self.width_px, 3), dtype=np.uint8)
 
-        # you can optionally refresh view
         self.update()
-
-        # call original behavior (good practice)
         super().resizeEvent(event)
 
     def wheelEvent(self, event):
@@ -1378,6 +1376,7 @@ class WaterfallWidget(QtWidgets.QWidget):
 
             # ograniczenia zoomu
             self.zoom_factor = max(0.05, min(1.0, self.zoom_factor))
+            self.zoom_changed.emit(int(105 - self.zoom_factor * 100))
 
             # frequency under cursor AFTER zoom
             freq_after = self._x_to_freq(mouse_x)
@@ -2363,16 +2362,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- controls ---
         controls = QtWidgets.QHBoxLayout()
 
-        controls.addWidget(QtWidgets.QLabel("Min[dB]:"))
-        self.min_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.min_slider.setRange(-160, -10)
-        self.min_slider.setPageStep = 1
-        self.min_slider.setSingleStep = 1
-        self.min_slider.setValue(int(self.waterfall_widget.min_db))
-        self.min_slider.valueChanged.connect(self.on_min_changed)
-        controls.addWidget(self.min_slider)
-        self.min_label = QtWidgets.QLabel(f"{int(self.waterfall_widget.min_db)}")
-        controls.addWidget(self.min_label)
+        controls.addWidget(QtWidgets.QLabel("Zoom:"))
+        self.zoom_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.zoom_slider.setRange(5, 100)   # 5=oddalony (zoom_factor=1.0) .. 100=przybliżony (zoom_factor=0.05)
+        self.zoom_slider.setSingleStep(1)
+        self.zoom_slider.setPageStep(5)
+        self.zoom_slider.setValue(int(105 - INITIAL_ZOOM * 100))
+        self.zoom_slider.valueChanged.connect(self.on_zoom_changed)
+        controls.addWidget(self.zoom_slider)
+        self.zoom_label = QtWidgets.QLabel(f"{int(105 - INITIAL_ZOOM * 100)}%")
+        controls.addWidget(self.zoom_label)
 
         controls.addSpacing(20)
 
@@ -2384,11 +2383,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         controls.addSpacing(20)
 
+        controls.addWidget(QtWidgets.QLabel("Min[dB]:"))
+        self.min_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.min_slider.setRange(-160, -10)
+        self.min_slider.setSingleStep(1)
+        self.min_slider.setPageStep(5)
+        self.min_slider.setValue(int(self.waterfall_widget.min_db))
+        self.min_slider.valueChanged.connect(self.on_min_changed)
+        controls.addWidget(self.min_slider)
+        self.min_label = QtWidgets.QLabel(f"{int(self.waterfall_widget.min_db)}")
+        controls.addWidget(self.min_label)
+
+        controls.addSpacing(20)
+
         controls.addWidget(QtWidgets.QLabel("Range[dB]:"))
         self.range_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.range_slider.setRange(0, 40)
-        self.range_slider.setPageStep = 1
-        self.range_slider.setSingleStep = 1
+        self.range_slider.setSingleStep(1)
+        self.range_slider.setPageStep(5)
         self.range_slider.setValue(WATERFALL_DYNAMIC_RANGE)
         self.range_slider.valueChanged.connect(self.on_range_changed)
         controls.addWidget(self.range_slider)
@@ -2400,9 +2412,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.root.addLayout(top_row)
         self.root.addLayout(self.smeter_row)
         if WATERFALL_ENABLED:
-            self.root.addWidget(self.waterfall_widget)
+            self.root.addWidget(self.waterfall_widget, 1)
             self.root.addLayout(controls)
-        self.root.addStretch()
+        else:
+            self.root.addStretch()
 
         self.status = self.statusBar()
         self.status.setVisible(False)
@@ -2437,6 +2450,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.waterfall_widget.center_freq = self.ws_thread.center_freq
             self.waterfall_widget.freq_clicked.connect(self.on_freq_clicked)
             self.waterfall_widget.new_min_db.connect(self.on_new_min_db)
+            self.waterfall_widget.zoom_changed.connect(self.on_zoom_slider_sync)
             self.waterfall_freq_update.connect(self.waterfall_widget.update_selected_freq)
             self.waterfall_freq_update.connect(self.ws_thread.send_set_frequency)
             self.fast_freq_status.connect(self.waterfall_widget.fast_freq_update)
@@ -2905,6 +2919,11 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 label.setStyleSheet(INACTIVE_STYLE)
 
+    def on_zoom_changed(self, val):
+        self.waterfall_widget.zoom_factor = (105 - val) / 100.0
+        self.zoom_label.setText(f"{val}%")
+        self.waterfall_widget.update()
+
     def on_min_changed(self, val):
         self.waterfall_widget.set_min_db(val)
         self.waterfall_widget.set_max_db(val + self.range_slider.value())
@@ -2928,6 +2947,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_new_min_db(self, new_min_db: int):
         self.min_slider.setValue(new_min_db)
+
+    def on_zoom_slider_sync(self, val: int):
+        self.zoom_slider.blockSignals(True)
+        self.zoom_slider.setValue(val)
+        self.zoom_label.setText(f"{val}%")
+        self.zoom_slider.blockSignals(False)
 
     def ignore_next_data(self, cnt=2):
         self.ignore_next_data_switch = True
