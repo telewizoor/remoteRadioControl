@@ -555,6 +555,114 @@ class FrequencyDialog(QtWidgets.QDialog):
         return int(self.edit.text())
 
 
+class BookmarksDialog(QtWidgets.QDialog):
+    """Dialog for viewing, selecting, and deleting bookmarks."""
+
+    def __init__(self, parent=None, bookmarks=None):
+        super().__init__(parent)
+        self.setWindowTitle("Bookmarks")
+        self.setMinimumWidth(400)
+        self.setMinimumHeight(350)
+        self.bookmarks = list(bookmarks) if bookmarks else []
+        self.selected_bookmark = None
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        self.list_widget = QtWidgets.QListWidget()
+        self.list_widget.setAlternatingRowColors(True)
+        self.list_widget.itemDoubleClicked.connect(self._on_double_click)
+        self._populate_list()
+        layout.addWidget(self.list_widget)
+
+        btn_layout = QtWidgets.QHBoxLayout()
+        self.tune_btn = QtWidgets.QPushButton("Tune")
+        self.tune_btn.clicked.connect(self._on_tune)
+        btn_layout.addWidget(self.tune_btn)
+
+        self.delete_btn = QtWidgets.QPushButton("Delete")
+        self.delete_btn.clicked.connect(self._on_delete)
+        btn_layout.addWidget(self.delete_btn)
+
+        self.edit_btn = QtWidgets.QPushButton("Edit")
+        self.edit_btn.clicked.connect(self._on_edit)
+        btn_layout.addWidget(self.edit_btn)
+
+        self.close_btn = QtWidgets.QPushButton("Close")
+        self.close_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(self.close_btn)
+
+        layout.addLayout(btn_layout)
+
+    def _populate_list(self):
+        self.list_widget.clear()
+        for bm in self.bookmarks:
+            freq_mhz = bm['freq_hz'] / 1e6
+            mode = bm.get('mode', '?')
+            name = bm.get('name', '')
+            text = f"{freq_mhz:.4f} MHz  [{mode}]  {name}"
+            self.list_widget.addItem(text)
+
+    def _on_tune(self):
+        row = self.list_widget.currentRow()
+        if 0 <= row < len(self.bookmarks):
+            self.selected_bookmark = self.bookmarks[row]
+            self.accept()
+
+    def _on_double_click(self, item):
+        self._on_tune()
+
+    def _on_delete(self):
+        row = self.list_widget.currentRow()
+        if 0 <= row < len(self.bookmarks):
+            name = self.bookmarks[row].get('name', '')
+            reply = QtWidgets.QMessageBox.question(
+                self, "Delete Bookmark",
+                f"Delete bookmark '{name}'?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+            )
+            if reply == QtWidgets.QMessageBox.Yes:
+                self.bookmarks.pop(row)
+                self._populate_list()
+
+    def _on_edit(self):
+        row = self.list_widget.currentRow()
+        if row < 0 or row >= len(self.bookmarks):
+            return
+        bm = self.bookmarks[row]
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Edit Bookmark")
+        form = QtWidgets.QFormLayout(dlg)
+
+        name_edit = QtWidgets.QLineEdit(bm.get('name', ''))
+        form.addRow("Name:", name_edit)
+
+        freq_edit = QtWidgets.QDoubleSpinBox()
+        freq_edit.setDecimals(4)
+        freq_edit.setRange(0.0, 500.0)
+        freq_edit.setSuffix(" MHz")
+        freq_edit.setValue(bm['freq_hz'] / 1e6)
+        form.addRow("Frequency:", freq_edit)
+
+        mode_edit = QtWidgets.QComboBox()
+        modes = ['USB', 'LSB', 'AM', 'FM', 'CW', 'CWR']
+        mode_edit.addItems(modes)
+        idx = mode_edit.findText(bm.get('mode', 'USB'))
+        if idx >= 0:
+            mode_edit.setCurrentIndex(idx)
+        form.addRow("Mode:", mode_edit)
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        form.addRow(buttons)
+
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            bm['name'] = name_edit.text().strip()
+            bm['freq_hz'] = int(freq_edit.value() * 1e6)
+            bm['mode'] = mode_edit.currentText()
+            self._populate_list()
+
+
 class SettingsDialog(QtWidgets.QDialog):
     """Application settings dialog with tabs"""
     
@@ -1342,6 +1450,10 @@ class WaterfallWidget(QtWidgets.QWidget):
         self.dx_cluster_enabled = DX_CLUSTER_ENABLED
         self._hovered_spot = None  # spot dict when mouse is near a dot
 
+        # Bookmarks
+        self.bookmarks = []
+        self._hovered_bookmark = None
+
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
     def set_min_db(self, value):
@@ -1493,6 +1605,25 @@ class WaterfallWidget(QtWidgets.QWidget):
                     best_dist = dx
         return best
 
+    def _find_bookmark_near(self, x):
+        """Find bookmark near pixel x position. Returns bookmark dict or None."""
+        if not self.bookmarks:
+            return None
+        vis_start, vis_end = self._visible_freq_range()
+        bw = max(1e-9, vis_end - vis_start)
+        HIT_RADIUS_X = 6
+        best = None
+        best_dist = HIT_RADIUS_X + 1
+        for bm in self.bookmarks:
+            f = bm['freq_hz']
+            if vis_start <= f <= vis_end:
+                x_bm = int((f - vis_start) / bw * (self.width_px - 1))
+                dx = abs(x - x_bm)
+                if dx <= HIT_RADIUS_X and dx < best_dist:
+                    best = bm
+                    best_dist = dx
+        return best
+
     def mouseMoveEvent(self, event):
         # hover - update frequency and repaint
         freq = int(self._x_to_freq(event.x()))
@@ -1505,6 +1636,12 @@ class WaterfallWidget(QtWidgets.QWidget):
         old_spot = self._hovered_spot
         self._hovered_spot = self._find_spot_near(event.x(), event.y())
         if self._hovered_spot != old_spot:
+            self.update()
+
+        # check bookmark hover
+        old_bm = self._hovered_bookmark
+        self._hovered_bookmark = self._find_bookmark_near(event.x())
+        if self._hovered_bookmark != old_bm:
             self.update()
 
         # if dragging - keep current panning
@@ -1685,6 +1822,46 @@ class WaterfallWidget(QtWidgets.QWidget):
                 if w > tw + 4:
                     painter.setPen(QtGui.QPen(QtGui.QColor(150, 255, 150), 1))
                     painter.drawText(x1 + (w - tw) // 2, WATERFALL_MARGIN - 2, text)
+
+            # --- drawing bookmarks (cyan dots on top of scale) ---
+            if self.bookmarks:
+                BM_DOT_RADIUS = 3
+                BM_DOT_Y = 6
+                for bm in self.bookmarks:
+                    f = bm['freq_hz']
+                    if vis_start <= f <= vis_end:
+                        x_bm = int((f - vis_start) / bw * (self.width_px - 1))
+                        painter.setPen(QtCore.Qt.NoPen)
+                        painter.setBrush(QtGui.QColor(0, 200, 255, 220))
+                        painter.drawEllipse(x_bm - BM_DOT_RADIUS, BM_DOT_Y - BM_DOT_RADIUS, BM_DOT_RADIUS * 2, BM_DOT_RADIUS * 2)
+
+                # tooltip for hovered bookmark
+                if self._hovered_bookmark is not None:
+                    hb = self._hovered_bookmark
+                    f = hb['freq_hz']
+                    if vis_start <= f <= vis_end:
+                        x_bm = int((f - vis_start) / bw * (self.width_px - 1))
+                        tip_font = painter.font()
+                        tip_font.setPointSize(9)
+                        tip_font.setBold(True)
+                        painter.setFont(tip_font)
+                        tip_metrics = painter.fontMetrics()
+                        name = hb.get('name', '')
+                        tip_text = f"{name}  {f/1e6:.4f} {hb.get('mode', '')}" if name else f"{f/1e6:.4f} {hb.get('mode', '')}"
+                        tw = tip_metrics.horizontalAdvance(tip_text)
+                        th = tip_metrics.height()
+                        tx = max(2, min(x_bm - tw // 2, self.width_px - tw - 4))
+                        ty = 12
+                        painter.fillRect(tx - 3, ty - 1, tw + 6, th + 4, QtGui.QColor(30, 30, 30, 140))
+                        painter.setPen(QtGui.QPen(QtGui.QColor(100, 220, 255, 140), 1))
+                        painter.drawRect(tx - 3, ty - 1, tw + 6, th + 4)
+                        painter.setPen(QtGui.QPen(QtGui.QColor(150, 240, 255, 200), 1))
+                        painter.drawText(tx, ty + th - 2, tip_text)
+                        tip_font.setBold(False)
+                        tip_font.setPointSize(10)
+                        painter.setFont(tip_font)
+
+                painter.setBrush(QtCore.Qt.NoBrush)
 
             # --- drawing vertical lines: selected (yellow) and hover (cyan)
             # freq -> x mapping
@@ -2648,6 +2825,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         right_btns_col.addStretch()
         right_btns_col.addWidget(self.settings_btn)
+
+        self.bookmarks_btn = QtWidgets.QPushButton("Memory")
+        self.bookmarks_btn.setFixedSize(NORMAL_BTN_WIDTH, NORMAL_BTN_HEIGHT)
+        self.bookmarks_btn.setStyleSheet("background-color: #d0d0d0; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.bookmarks_btn.clicked.connect(self.open_bookmarks)
+
+        self.save_bookmark_btn = QtWidgets.QPushButton("Mem+")
+        self.save_bookmark_btn.setFixedSize(NORMAL_BTN_WIDTH, NORMAL_BTN_HEIGHT)
+        self.save_bookmark_btn.setStyleSheet("background-color: #d0d0d0; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.save_bookmark_btn.clicked.connect(self.save_bookmark)
+
+        right_btns_col.addWidget(self.bookmarks_btn)
+        right_btns_col.addWidget(self.save_bookmark_btn)
         right_btns_col.addStretch()
         right_btns_col.addWidget(self.dx_status_label)
         right_btns_col.addWidget(self.dx_status_indicator)
@@ -2775,6 +2965,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.dx_cluster.start()
 
         self.client = RigctlClient(HOST, PORT, timeout=TCP_TIMEOUT)
+
+        # Load bookmarks
+        self._refresh_waterfall_bookmarks()
 
     @QtCore.pyqtSlot(list)
     def _on_dx_spots_updated(self, spots):
@@ -3732,6 +3925,72 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Settings Applied",
                 "Some settings have been applied.\nRestart the application for all changes to take effect."
             )
+
+    # --- Bookmarks ---
+    BOOKMARKS_FILE = os.path.join(dir_path, 'bookmarks.json')
+
+    def _load_bookmarks(self):
+        """Load bookmarks from JSON file."""
+        try:
+            if os.path.exists(self.BOOKMARKS_FILE):
+                with open(self.BOOKMARKS_FILE, 'r', encoding='utf-8') as f:
+                    bm = json.load(f)
+                    if isinstance(bm, list):
+                        return bm
+        except Exception as e:
+            print(f"Error loading bookmarks: {e}")
+        return []
+
+    def _save_bookmarks(self, bookmarks):
+        """Save bookmarks to JSON file."""
+        try:
+            with open(self.BOOKMARKS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(bookmarks, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Error saving bookmarks: {e}")
+
+    def _refresh_waterfall_bookmarks(self):
+        """Push current bookmarks to waterfall widget."""
+        if WATERFALL_ENABLED and hasattr(self, 'waterfall_widget'):
+            self.waterfall_widget.bookmarks = self._load_bookmarks()
+            self.waterfall_widget.update()
+
+    def save_bookmark(self):
+        """Save current frequency and mode as bookmark."""
+        freq = self.current_freq
+        mode = self.mode
+        name, ok = QtWidgets.QInputDialog.getText(
+            self, "Save Bookmark",
+            f"Name for {freq/1e6:.4f} MHz ({mode}):",
+            text=f"{freq/1e6:.4f} {mode}"
+        )
+        if ok and name:
+            bookmarks = self._load_bookmarks()
+            bookmarks.append({
+                'name': name.strip(),
+                'freq_hz': freq,
+                'mode': mode
+            })
+            self._save_bookmarks(bookmarks)
+            self._refresh_waterfall_bookmarks()
+
+    def open_bookmarks(self):
+        """Open bookmarks list dialog."""
+        bookmarks = self._load_bookmarks()
+        dlg = BookmarksDialog(self, bookmarks)
+        result = dlg.exec_()
+        if result == QtWidgets.QDialog.Accepted:
+            sel = dlg.selected_bookmark
+            if sel:
+                # Switch to bookmark frequency and mode
+                mode = sel.get('mode', self.mode)
+                freq = sel['freq_hz']
+                cmd = f"M {mode} 0"
+                self.client.send(cmd)
+                self.frequency_change(freq)
+        # Save in case bookmarks were deleted
+        self._save_bookmarks(dlg.bookmarks)
+        self._refresh_waterfall_bookmarks()
 
     def toggle_audio_client(self):
         """Starts or stops audio client."""
