@@ -1823,6 +1823,14 @@ class WaterfallWidget(QtWidgets.QWidget):
                     painter.setPen(QtGui.QPen(QtGui.QColor(150, 255, 150), 1))
                     painter.drawText(x1 + (w - tw) // 2, WATERFALL_MARGIN - 2, text)
 
+            if self.hover_freq is not None:
+                if vis_start <= self.hover_freq <= vis_end:
+                    x_h = int((self.hover_freq - vis_start) / bw * (self.width_px - 1))
+                    pen_h = QtGui.QPen(QtGui.QColor(150, 255, 150, 255), 2)   # cyan
+                    painter.setPen(pen_h)
+                    painter.drawLine(x_h, 0, x_h, self.height_px)
+                    painter.drawText(x_h, self.height_px - 16, f"{self.hover_freq/1000000:.4f}")
+
             # --- drawing bookmarks (cyan dots on top of scale) ---
             if self.bookmarks:
                 BM_DOT_RADIUS = 3
@@ -1930,14 +1938,6 @@ class WaterfallWidget(QtWidgets.QWidget):
                         painter.setFont(tip_font)
 
                 painter.setBrush(QtCore.Qt.NoBrush)
-
-            if self.hover_freq is not None:
-                if vis_start <= self.hover_freq <= vis_end:
-                    x_h = int((self.hover_freq - vis_start) / bw * (self.width_px - 1))
-                    pen_h = QtGui.QPen(QtGui.QColor(150, 255, 150, 255), 2)   # cyan
-                    painter.setPen(pen_h)
-                    painter.drawLine(x_h, 0, x_h, self.height_px)
-                    painter.drawText(x_h, self.height_px - 16, f"{self.hover_freq/1000000:.4f}")
 
 class WsReceiver(threading.Thread, QtCore.QObject):
     push_row_signal = QtCore.pyqtSignal(object)
