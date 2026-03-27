@@ -18,6 +18,11 @@
     "waterfall_initial_zoom": 0.25,
     "waterfall_dynamic_range": 25,
     "waterfall_min_db_default": -90,
+    "dx_cluster_enabled": true,
+    "dx_cluster_callsign": "SP9PHO",
+    "dx_cluster_server": "dxc.ve7cc.net",
+    "dx_cluster_port": 23,
+    "dx_cluster_backup_servers": "dxfun.com:8000,dx.k3lr.com:7300,dxc.ai9t.com:7300,w3lpl.net:7373",
     "filter_width_usb_narrow": 1800,
     "filter_width_usb_normal": 2400,
     "filter_width_usb_wide": 3000,
@@ -37,7 +42,7 @@
     "filter_width_cwr_normal": 500,
     "filter_width_cwr_wide": 2400,
     "stay_on_top": false,
-    "audio_input_device": 2,
+    "audio_input_device": 1,
     "audio_output_device": null,
     "waterfall_margin": 32
 }

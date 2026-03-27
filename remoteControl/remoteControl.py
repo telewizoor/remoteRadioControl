@@ -68,6 +68,13 @@ class Config:
             'waterfall_dynamic_range': 25,
             'waterfall_min_db_default': -90,
             
+            # DX Cluster
+            'dx_cluster_enabled': False,
+            'dx_cluster_callsign': 'N0CALL',
+            'dx_cluster_server': 'dxc.ve7cc.net',
+            'dx_cluster_port': 23,
+            'dx_cluster_backup_servers': 'dxfun.com:8000,dx.k3lr.com:7300,dxc.ai9t.com:7300,w3lpl.net:7373',
+            
             # Filter Widths
             'filter_width_usb_narrow': 1800,
             'filter_width_usb_normal': 2400,
@@ -307,6 +314,13 @@ WATERFALL_DYNAMIC_RANGE = config.get('waterfall_dynamic_range')
 
 MOUSE_WHEEL_FREQ_STEP = config.get('mouse_wheel_freq_step')
 MOUSE_WHEEL_FAST_FREQ_STEP = config.get('mouse_wheel_fast_freq_step')
+
+# DX Cluster
+DX_CLUSTER_ENABLED = config.get('dx_cluster_enabled')
+DX_CLUSTER_CALLSIGN = config.get('dx_cluster_callsign')
+DX_CLUSTER_SERVER = config.get('dx_cluster_server')
+DX_CLUSTER_PORT = config.get('dx_cluster_port')
+DX_CLUSTER_BACKUP_SERVERS = config.get('dx_cluster_backup_servers')
 
 WATERFALL_MARGIN   = 32
 MAJOR_THICK_HEIGHT = 12
@@ -729,6 +743,32 @@ class SettingsDialog(QtWidgets.QDialog):
         layout_waterfall.addRow("Initial Zoom:", self.edit_initial_zoom)
         layout_waterfall.addRow("Dynamic Range:", self.edit_dynamic_range)
         
+        # DX Cluster settings
+        dx_separator = QtWidgets.QFrame()
+        dx_separator.setFrameShape(QtWidgets.QFrame.HLine)
+        dx_separator.setStyleSheet("color: gray;")
+        layout_waterfall.addRow(dx_separator)
+        
+        self.check_dx_cluster_enabled = QtWidgets.QCheckBox("Enable DX Cluster")
+        self.check_dx_cluster_enabled.setChecked(self.temp_settings.get('dx_cluster_enabled', False))
+        layout_waterfall.addRow("", self.check_dx_cluster_enabled)
+        
+        self.edit_dx_callsign = QtWidgets.QLineEdit(str(self.temp_settings.get('dx_cluster_callsign', 'N0CALL')))
+        self.edit_dx_callsign.setMaxLength(12)
+        layout_waterfall.addRow("Callsign:", self.edit_dx_callsign)
+        
+        self.edit_dx_server = QtWidgets.QLineEdit(str(self.temp_settings.get('dx_cluster_server', 'dxc.ve7cc.net')))
+        layout_waterfall.addRow("Server:", self.edit_dx_server)
+        
+        self.edit_dx_port = QtWidgets.QSpinBox()
+        self.edit_dx_port.setRange(1, 65535)
+        self.edit_dx_port.setValue(self.temp_settings.get('dx_cluster_port', 23))
+        layout_waterfall.addRow("Port:", self.edit_dx_port)
+        
+        self.edit_dx_backup = QtWidgets.QLineEdit(str(self.temp_settings.get('dx_cluster_backup_servers', '')))
+        self.edit_dx_backup.setPlaceholderText("host:port,host:port,...")
+        layout_waterfall.addRow("Backup Servers:", self.edit_dx_backup)
+        
         restart_label = QtWidgets.QLabel("⚠️ Requires restart to apply")
         restart_label.setStyleSheet("color: orange; font-weight: bold;")
         layout_waterfall.addRow("", restart_label)
@@ -932,6 +972,13 @@ class SettingsDialog(QtWidgets.QDialog):
         self.temp_settings['waterfall_initial_zoom'] = self.edit_initial_zoom.value()
         self.temp_settings['waterfall_dynamic_range'] = self.edit_dynamic_range.value()
         
+        # DX Cluster
+        self.temp_settings['dx_cluster_enabled'] = self.check_dx_cluster_enabled.isChecked()
+        self.temp_settings['dx_cluster_callsign'] = self.edit_dx_callsign.text().strip().upper()
+        self.temp_settings['dx_cluster_server'] = self.edit_dx_server.text().strip()
+        self.temp_settings['dx_cluster_port'] = self.edit_dx_port.value()
+        self.temp_settings['dx_cluster_backup_servers'] = self.edit_dx_backup.text().strip()
+        
         # Filters
         for key, spinbox in self.filter_edits.items():
             self.temp_settings[key] = spinbox.value()
@@ -971,6 +1018,13 @@ class SettingsDialog(QtWidgets.QDialog):
         self.check_waterfall_enabled.setChecked(self.temp_settings['waterfall_enabled'])
         self.edit_initial_zoom.setValue(self.temp_settings['waterfall_initial_zoom'])
         self.edit_dynamic_range.setValue(self.temp_settings['waterfall_dynamic_range'])
+        
+        # DX Cluster
+        self.check_dx_cluster_enabled.setChecked(self.temp_settings.get('dx_cluster_enabled', False))
+        self.edit_dx_callsign.setText(str(self.temp_settings.get('dx_cluster_callsign', 'N0CALL')))
+        self.edit_dx_server.setText(str(self.temp_settings.get('dx_cluster_server', 'dxc.ve7cc.net')))
+        self.edit_dx_port.setValue(self.temp_settings.get('dx_cluster_port', 23))
+        self.edit_dx_backup.setText(str(self.temp_settings.get('dx_cluster_backup_servers', '')))
         
         # Filters
         for key, spinbox in self.filter_edits.items():
@@ -1283,6 +1337,11 @@ class WaterfallWidget(QtWidgets.QWidget):
         self.initial_zoom_set = False
         self.fast_freq = False
 
+        # DX Cluster spots
+        self.dx_spots = []
+        self.dx_cluster_enabled = DX_CLUSTER_ENABLED
+        self._hovered_spot = None  # spot dict when mouse is near a dot
+
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
     def set_min_db(self, value):
@@ -1415,12 +1474,37 @@ class WaterfallWidget(QtWidgets.QWidget):
             self._press_x = event.x()
             self._press_y = event.y()
 
+    def _find_spot_near(self, x, y):
+        """Find DX spot near pixel position (x,y). Returns spot dict or None."""
+        if not self.dx_cluster_enabled or not self.dx_spots:
+            return None
+        vis_start, vis_end = self._visible_freq_range()
+        bw = max(1e-9, vis_end - vis_start)
+        HIT_RADIUS_X = 6
+        best = None
+        best_dist = HIT_RADIUS_X + 1
+        for spot in self.dx_spots:
+            f = spot['freq_hz']
+            if vis_start <= f <= vis_end:
+                x_spot = int((f - vis_start) / bw * (self.width_px - 1))
+                dx = abs(x - x_spot)
+                if dx <= HIT_RADIUS_X and dx < best_dist:
+                    best = spot
+                    best_dist = dx
+        return best
+
     def mouseMoveEvent(self, event):
         # hover - update frequency and repaint
         freq = int(self._x_to_freq(event.x()))
         if freq != self.hover_freq:
             self.hover_freq = freq
             self.freq_hover.emit(freq)
+            self.update()
+
+        # check DX spot hover
+        old_spot = self._hovered_spot
+        self._hovered_spot = self._find_spot_near(event.x(), event.y())
+        if self._hovered_spot != old_spot:
             self.update()
 
         # if dragging - keep current panning
@@ -1629,6 +1713,47 @@ class WaterfallWidget(QtWidgets.QWidget):
                     # draw frequency label
                     # painter.fillRect(x_sel, x_sel + 100, self.height_px - 2, self.height_px + 12, QtGui.QColor(60,60,60,150))
                     painter.drawText(x_sel, self.height_px - 2, f"{self.selected_freq/1000000:.4f}")
+            # --- drawing DX Cluster spots (dots on scale + tooltip on hover) ---
+            if self.dx_cluster_enabled and self.dx_spots:
+                DOT_RADIUS = 3
+                DOT_Y = WATERFALL_MARGIN - 3
+                for spot in self.dx_spots:
+                    f = spot['freq_hz']
+                    if vis_start <= f <= vis_end:
+                        x_spot = int((f - vis_start) / bw * (self.width_px - 1))
+                        # orange dot on scale
+                        painter.setPen(QtCore.Qt.NoPen)
+                        painter.setBrush(QtGui.QColor(255, 140, 0, 220))
+                        painter.drawEllipse(x_spot - DOT_RADIUS, DOT_Y - DOT_RADIUS, DOT_RADIUS * 2, DOT_RADIUS * 2)
+
+                # tooltip for hovered spot
+                if self._hovered_spot is not None:
+                    hs = self._hovered_spot
+                    f = hs['freq_hz']
+                    if vis_start <= f <= vis_end:
+                        x_spot = int((f - vis_start) / bw * (self.width_px - 1))
+                        tip_font = painter.font()
+                        tip_font.setPointSize(9)
+                        tip_font.setBold(True)
+                        painter.setFont(tip_font)
+                        tip_metrics = painter.fontMetrics()
+                        tip_text = f"{hs['call']}" # {f/1e3:.1f}
+                        tw = tip_metrics.horizontalAdvance(tip_text)
+                        th = tip_metrics.height()
+                        tx = max(2, min(x_spot - tw // 2, self.width_px - tw - 4))
+                        ty = WATERFALL_MARGIN - 23
+                        painter.fillRect(tx - 3, ty - 1, tw + 6, th + 4, QtGui.QColor(30, 30, 30, 140))
+                        painter.setPen(QtGui.QPen(QtGui.QColor(255, 200, 80, 140), 1))
+                        painter.drawRect(tx - 3, ty - 1, tw + 6, th + 4)
+                        painter.setPen(QtGui.QPen(QtGui.QColor(255, 220, 100, 200), 1))
+                        painter.drawText(tx, ty + th - 2, tip_text)
+                        # restore font
+                        tip_font.setBold(False)
+                        tip_font.setPointSize(10)
+                        painter.setFont(tip_font)
+
+                painter.setBrush(QtCore.Qt.NoBrush)
+
             if self.hover_freq is not None:
                 if vis_start <= self.hover_freq <= vis_end:
                     x_h = int((self.hover_freq - vis_start) / bw * (self.width_px - 1))
@@ -1743,6 +1868,178 @@ class WsReceiver(threading.Thread, QtCore.QObject):
             if not self._stop_event.is_set():
                 import time
                 time.sleep(1)
+
+### --- DX Cluster Client --- ###
+class DxClusterClient(threading.Thread, QtCore.QObject):
+    """Telnet client for DX Cluster - receives and parses spot data."""
+    spots_updated = QtCore.pyqtSignal(list)  # emits list of {freq_hz, call, spotter, time_str}
+    status_changed = QtCore.pyqtSignal(str)  # 'connected', 'disconnected', 'connecting'
+
+    # Regex for standard real-time DX spot format:
+    # DX de SP9PHO:     14025.0  W1AW         CQ CQ              1234Z
+    SPOT_RE = re.compile(
+        r'DX\s+de\s+(\S+):\s*([\d.]+)\s+(\S+)\s+(.*?)\s+(\d{4})Z',
+        re.IGNORECASE
+    )
+
+    # Regex for SH/DX history format (no "DX de" prefix):
+    # 14153.0  IT9AAK/P  27-Mar-2026 1423Z  CQ  <W3LPL>
+    SHDX_RE = re.compile(
+        r'^\s*([\d]{3,6}\.[\d]{1,2})\s+([A-Z0-9/]+)\s+(.+)',
+        re.IGNORECASE
+    )
+
+    MAX_SPOTS = 200  # max spots to keep in memory
+    SPOT_MAX_AGE = 1800  # seconds (30 min) - spots older than this are removed
+
+    def __init__(self, server, port, callsign, backup_servers_str=''):
+        threading.Thread.__init__(self, daemon=True)
+        QtCore.QObject.__init__(self)
+        self.server = server
+        self.port = port
+        self.callsign = callsign
+        self.backup_servers = []
+        if backup_servers_str:
+            for entry in backup_servers_str.split(','):
+                entry = entry.strip()
+                if ':' in entry:
+                    h, p = entry.rsplit(':', 1)
+                    try:
+                        self.backup_servers.append((h.strip(), int(p)))
+                    except ValueError:
+                        pass
+                else:
+                    self.backup_servers.append((entry, 23))
+        self._stop_event = threading.Event()
+        self._spots = []  # list of dicts: {freq_hz, call, spotter, time_str, timestamp}
+        self._lock = threading.Lock()
+        import time as _time
+        self._time = _time
+
+    def stop(self):
+        self._stop_event.set()
+
+    def get_spots(self):
+        """Returns a copy of current spots list (thread safe)."""
+        with self._lock:
+            return list(self._spots)
+
+    def _add_spot(self, spotter, freq_khz, call, comment, time_str):
+        import time as _time
+        freq_hz = int(float(freq_khz) * 1000)
+        spot = {
+            'freq_hz': freq_hz,
+            'call': call.strip(),
+            'spotter': spotter.strip().rstrip(':'),
+            'time_str': time_str.strip(),
+            'comment': comment.strip(),
+            'timestamp': _time.time()
+        }
+        with self._lock:
+            # Remove old duplicate (same call on similar freq)
+            self._spots = [
+                s for s in self._spots
+                if not (s['call'] == spot['call'] and abs(s['freq_hz'] - spot['freq_hz']) < 500)
+            ]
+            self._spots.append(spot)
+            # Remove expired spots
+            now = _time.time()
+            self._spots = [
+                s for s in self._spots
+                if now - s['timestamp'] < self.SPOT_MAX_AGE
+            ]
+            # Trim to MAX_SPOTS
+            if len(self._spots) > self.MAX_SPOTS:
+                self._spots = self._spots[-self.MAX_SPOTS:]
+            spots_copy = list(self._spots)
+        self.spots_updated.emit(spots_copy)
+
+    def _try_connect(self, host, port):
+        """Attempt to connect to a DX cluster server. Returns socket or None."""
+        try:
+            sock = socket.create_connection((host, port), timeout=10)
+            sock.settimeout(30)
+            return sock
+        except Exception as e:
+            print(f"DX Cluster: failed to connect to {host}:{port} - {e}")
+            return None
+
+    def run(self):
+        import time as _time
+        servers = [(self.server, self.port)] + self.backup_servers
+
+        while not self._stop_event.is_set():
+            sock = None
+            for host, port in servers:
+                if self._stop_event.is_set():
+                    return
+                print(f"DX Cluster: connecting to {host}:{port}...")
+                self.status_changed.emit('connecting')
+                sock = self._try_connect(host, port)
+                if sock:
+                    print(f"DX Cluster: connected to {host}:{port}")
+                    break
+
+            if not sock:
+                print("DX Cluster: all servers failed, retrying in 30s...")
+                self.status_changed.emit('disconnected')
+                self._stop_event.wait(30)
+                continue
+
+            try:
+                buf = b''
+                login_sent = False
+                while not self._stop_event.is_set():
+                    try:
+                        data = sock.recv(4096)
+                    except socket.timeout:
+                        continue
+                    except Exception:
+                        break
+                    if not data:
+                        break
+                    buf += data
+                    while b'\n' in buf:
+                        line, buf = buf.split(b'\n', 1)
+                        line_str = line.decode('latin-1', errors='replace').strip()
+                        if not line_str:
+                            continue
+                        print(f"DX< {line_str}")
+                        # Send callsign on login prompt
+                        if not login_sent and ('login' in line_str.lower() or 'call' in line_str.lower() or 'enter' in line_str.lower()):
+                            sock.sendall((self.callsign + '\r\n').encode('ascii'))
+                            login_sent = True
+                            print(f"DX Cluster: logged in as {self.callsign}")
+                            self.status_changed.emit('connected')
+                            # Request last 50 spots
+                            import time as _t; _t.sleep(1)
+                            sock.sendall(b'SH/DX 50\r\n')
+                            continue
+                        # Parse DX spot (real-time format)
+                        m = self.SPOT_RE.search(line_str)
+                        if m:
+                            spotter, freq_khz, call, comment, time_str = m.groups()
+                            print(f"DX SPOT: {call} on {freq_khz} kHz by {spotter}")
+                            self._add_spot(spotter, freq_khz, call, comment, time_str)
+                            continue
+                        # Parse SH/DX history format
+                        m2 = self.SHDX_RE.search(line_str)
+                        if m2:
+                            freq_khz, call, rest = m2.groups()
+                            print(f"DX HIST: {call} on {freq_khz} kHz | {rest.strip()}")
+                            self._add_spot('', freq_khz, call, rest.strip(), '')
+            except Exception as e:
+                print(f"DX Cluster: connection error - {e}")
+            finally:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                self.status_changed.emit('disconnected')
+            if not self._stop_event.is_set():
+                print("DX Cluster: reconnecting in 5s...")
+                self._stop_event.wait(5)
+
 
 class AudioStateSignaler(QtCore.QObject):
     """Helper do przekazywania stanu audio z wątku do Qt UI."""
@@ -2339,11 +2636,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.audio_status_label.setAlignment(QtCore.Qt.AlignCenter)
         self.audio_status_label.setFixedWidth(NORMAL_BTN_WIDTH)
         
+        # DX Cluster status indicator
+        self.dx_status_label = QtWidgets.QLabel("DX Cluster")
+        self.dx_status_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.dx_status_label.setFixedWidth(NORMAL_BTN_WIDTH)
+        self.dx_status_label.setStyleSheet("color: gray; font-size: 8pt;")
+        self.dx_status_indicator = QtWidgets.QLabel("●")
+        self.dx_status_indicator.setAlignment(QtCore.Qt.AlignCenter)
+        self.dx_status_indicator.setFixedWidth(NORMAL_BTN_WIDTH)
+        self._update_dx_status('disconnected')
+
         right_btns_col.addStretch()
         right_btns_col.addWidget(self.settings_btn)
         right_btns_col.addStretch()
-        right_btns_col.addWidget(self.audio_btn)
-        right_btns_col.addWidget(self.audio_status_label)
+        right_btns_col.addWidget(self.dx_status_label)
+        right_btns_col.addWidget(self.dx_status_indicator)
         right_btns_col.addStretch()
         self.audio_status_changed.connect(self.on_audio_status)
         top_row.addLayout(right_btns_col)
@@ -2457,7 +2764,37 @@ class MainWindow(QtWidgets.QMainWindow):
             self.adjust_waterfall_colors.connect(self.waterfall_widget.adjustWaterfallColors)
             self.ws_thread.start()
 
+            # DX Cluster
+            if DX_CLUSTER_ENABLED:
+                self.dx_cluster = DxClusterClient(
+                    DX_CLUSTER_SERVER, DX_CLUSTER_PORT, DX_CLUSTER_CALLSIGN,
+                    DX_CLUSTER_BACKUP_SERVERS
+                )
+                self.dx_cluster.spots_updated.connect(self._on_dx_spots_updated)
+                self.dx_cluster.status_changed.connect(self._update_dx_status)
+                self.dx_cluster.start()
+
         self.client = RigctlClient(HOST, PORT, timeout=TCP_TIMEOUT)
+
+    @QtCore.pyqtSlot(list)
+    def _on_dx_spots_updated(self, spots):
+        """Received new DX spots from cluster - update waterfall."""
+        if WATERFALL_ENABLED and hasattr(self, 'waterfall_widget'):
+            self.waterfall_widget.dx_spots = spots
+            self.waterfall_widget.update()
+
+    @QtCore.pyqtSlot(str)
+    def _update_dx_status(self, status):
+        """Update DX Cluster connection indicator."""
+        if status == 'connected':
+            self.dx_status_indicator.setText("● connected")
+            self.dx_status_indicator.setStyleSheet("color: #4CAF50; font-size: 9pt;")
+        elif status == 'connecting':
+            self.dx_status_indicator.setText("● connecting...")
+            self.dx_status_indicator.setStyleSheet("color: #aa8800; font-size: 9pt;")
+        else:
+            self.dx_status_indicator.setText("● offline")
+            self.dx_status_indicator.setStyleSheet("color: #cc3333; font-size: 9pt;")
 
     def parse_af_gain(self, val):
         if val is not None:
@@ -3574,6 +3911,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         if WATERFALL_ENABLED and hasattr(self, 'ws_thread'):
             self.ws_thread.stop()
+        if hasattr(self, 'dx_cluster'):
+            self.dx_cluster.stop()
         if self._audio_stop_event is not None:
             self._audio_stop_event.set()
         if self._audio_thread is not None and self._audio_thread.is_alive():
