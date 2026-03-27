@@ -1834,7 +1834,7 @@ class WaterfallWidget(QtWidgets.QWidget):
             # --- drawing bookmarks (cyan dots on top of scale) ---
             if self.bookmarks:
                 BM_DOT_RADIUS = 3
-                BM_DOT_Y = 6
+                BM_DOT_Y = WATERFALL_MARGIN - 7
                 for bm in self.bookmarks:
                     f = bm['freq_hz']
                     if vis_start <= f <= vis_end:
