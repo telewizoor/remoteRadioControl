@@ -3,10 +3,10 @@ Description=Radio Remote Control Node Service
 After=multi-user.target
 
 [Service]
-ExecStart=sudo node server.js
+ExecStart=/usr/bin/node server.js
 Restart=always
 RestartSec=30
-WorkingDirectory=/home/pi/Project/remoteRadioControl/server
+WorkingDirectory=/home/pi/Project/remoteRadioControl/remoteControlNode
 StandardOutput=journal
 StandardError=journal
 Type=simple

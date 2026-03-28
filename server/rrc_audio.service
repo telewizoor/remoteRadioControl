@@ -3,10 +3,10 @@ Description=Remote Radio Control Audio Server Service
 After=multi-user.target
 
 [Service]
-ExecStart=/home/pi/Project/remoteRadioControl/env/bin/python /home/pi/Project/remoteRadioControl/server/audioServer.py
+ExecStart=/home/pi/Project/remoteRadioControl/env/bin/python /home/pi/Project/remoteRadioControl/remoteControlNode/audioServer.py
 Restart=always
 RestartSec=30
-WorkingDirectory=/home/pi/Project/remoteRadioControl/server
+WorkingDirectory=/home/pi/Project/remoteRadioControl/remoteControlNode
 StandardOutput=journal
 StandardError=journal
 Type=simple

@@ -1831,6 +1831,34 @@ class WaterfallWidget(QtWidgets.QWidget):
                     painter.drawLine(x_h, 0, x_h, self.height_px)
                     painter.drawText(x_h, self.height_px - 16, f"{self.hover_freq/1000000:.4f}")
 
+            # --- drawing vertical lines: selected (yellow) and hover (cyan)
+            # freq -> x mapping
+            vis_start, vis_end = self._visible_freq_range()
+            bw = max(1e-9, (vis_end - vis_start))
+            if self.selected_freq is not None:
+                if vis_start <= self.selected_freq <= vis_end:
+                    x_sel = int((self.selected_freq - vis_start) / bw * (self.width_px - 1))
+                    pen_sel = QtGui.QPen(QtGui.QColor(255, 255, 0, 220), 2)  # yellow
+                    painter.setPen(pen_sel)
+                    painter.drawLine(x_sel, 0, x_sel, self.height_px)
+                    # filter width
+                    x_width = x_sel
+                    width = int((self.selected_freq + self.filter_width - vis_start) / bw * (self.width_px - 1))
+                    if self.mode == 'USB':
+                        width = int((self.selected_freq + self.filter_width - vis_start) / bw * (self.width_px - 1))
+                    elif self.mode == 'LSB':
+                        width = int((self.selected_freq - self.filter_width - vis_start) / bw * (self.width_px - 1))
+                    elif self.mode == 'CW':
+                        width = int((self.selected_freq - self.filter_width - vis_start) / bw * (self.width_px - 1))
+                    elif self.mode == 'AM' or self.mode == 'FM':
+                        width = int((self.selected_freq + self.filter_width/2 - vis_start) / bw * (self.width_px - 1))
+                        x_width = int((self.selected_freq - self.filter_width/2 - vis_start) / bw * (self.width_px - 1))
+
+                    painter.fillRect(x_width, 0, width - x_width, self.height_px, QtGui.QColor(205,205,100,50))
+                    # draw frequency label
+                    # painter.fillRect(x_sel, x_sel + 100, self.height_px - 2, self.height_px + 12, QtGui.QColor(60,60,60,150))
+                    painter.drawText(x_sel, self.height_px - 2, f"{self.selected_freq/1000000:.4f}")
+
             # --- drawing bookmarks (cyan dots on top of scale) ---
             if self.bookmarks:
                 BM_DOT_RADIUS = 3
@@ -1871,33 +1899,6 @@ class WaterfallWidget(QtWidgets.QWidget):
 
                 painter.setBrush(QtCore.Qt.NoBrush)
 
-            # --- drawing vertical lines: selected (yellow) and hover (cyan)
-            # freq -> x mapping
-            vis_start, vis_end = self._visible_freq_range()
-            bw = max(1e-9, (vis_end - vis_start))
-            if self.selected_freq is not None:
-                if vis_start <= self.selected_freq <= vis_end:
-                    x_sel = int((self.selected_freq - vis_start) / bw * (self.width_px - 1))
-                    pen_sel = QtGui.QPen(QtGui.QColor(255, 255, 0, 220), 2)  # yellow
-                    painter.setPen(pen_sel)
-                    painter.drawLine(x_sel, 0, x_sel, self.height_px)
-                    # filter width
-                    x_width = x_sel
-                    width = int((self.selected_freq + self.filter_width - vis_start) / bw * (self.width_px - 1))
-                    if self.mode == 'USB':
-                        width = int((self.selected_freq + self.filter_width - vis_start) / bw * (self.width_px - 1))
-                    elif self.mode == 'LSB':
-                        width = int((self.selected_freq - self.filter_width - vis_start) / bw * (self.width_px - 1))
-                    elif self.mode == 'CW':
-                        width = int((self.selected_freq - self.filter_width - vis_start) / bw * (self.width_px - 1))
-                    elif self.mode == 'AM' or self.mode == 'FM':
-                        width = int((self.selected_freq + self.filter_width/2 - vis_start) / bw * (self.width_px - 1))
-                        x_width = int((self.selected_freq - self.filter_width/2 - vis_start) / bw * (self.width_px - 1))
-
-                    painter.fillRect(x_width, 0, width - x_width, self.height_px, QtGui.QColor(205,205,100,50))
-                    # draw frequency label
-                    # painter.fillRect(x_sel, x_sel + 100, self.height_px - 2, self.height_px + 12, QtGui.QColor(60,60,60,150))
-                    painter.drawText(x_sel, self.height_px - 2, f"{self.selected_freq/1000000:.4f}")
             # --- drawing DX Cluster spots (dots on scale + tooltip on hover) ---
             if self.dx_cluster_enabled and self.dx_spots:
                 DOT_RADIUS = 3
