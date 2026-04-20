@@ -423,6 +423,8 @@ class RigctlClient:
                 resp = None
             return resp or None
         except (OSError, ConnectionError):
+            self.connected = 0
+            self.s = None
             return None
 
 
@@ -2241,13 +2243,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         sizeObject = QtWidgets.QDesktopWidget().availableGeometry(-1)
         windowWidth = int(WINDOW_WIDTH_PERCENTAGE / 100 * sizeObject.width())
+        windowWidth = int(sizeObject.width())
         windowHeight = int(WINDOW_HEIGHT_PERCENTAGE / 100 * sizeObject.height())
         if WATERFALL_ENABLED:
             windowHeight = 400
         else:
             windowHeight = 200
 
-        self.setGeometry(12, sizeObject.height() - windowHeight - 48, windowWidth, windowHeight)
+        self.setGeometry(0, sizeObject.height() - windowHeight - 48, windowWidth, windowHeight)
 
         # Stay on top based on config
         if config.get('stay_on_top', False):
@@ -3121,8 +3124,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not "[TX]" in temp:
                     self.setWindowTitle("[TX] " + temp)
                 self.replace_s_meter_when_tx(1)
+                # Watchdog: radio still reports TX but we already sent T 0
+                if self.tx_sent == 0:
+                    self._tx_watchdog_cnt = getattr(self, '_tx_watchdog_cnt', 0) + 1
+                    if self._tx_watchdog_cnt >= 2:
+                        self._tx_watchdog_cnt = 0
+                        QTimer.singleShot(0, self.disable_tx)
+                else:
+                    self._tx_watchdog_cnt = 0
             else:
                 self.tx_active = 0
+                self._tx_watchdog_cnt = 0
                 self.setWindowTitle(self.windowTitle().replace('[TX] ', ''))
                 self.centralWidget().setStyleSheet("")
                 self.replace_s_meter_when_tx(0)
@@ -3641,17 +3653,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def band_down_btn_clicked(self):
         cmd = f"G BAND_DOWN"
-        self.ignore_next_data()
+        self.ignore_next_data(4)
         self.client.send(cmd)
         self.waterfall_widget.initial_zoom_set = False
-        self.worker.reset_one_time.emit("all")
+        QTimer.singleShot(2500, lambda: self.worker.reset_one_time.emit("all"))
 
     def band_up_btn_clicked(self):
         cmd = f"G BAND_UP"
-        self.ignore_next_data()
+        self.ignore_next_data(4)
         self.client.send(cmd)
         self.waterfall_widget.initial_zoom_set = False
-        self.worker.reset_one_time.emit("all")
+        QTimer.singleShot(2500, lambda: self.worker.reset_one_time.emit("all"))
 
     def a_eq_b_btn_clicked(self):
         cmd = f"G CPY"
@@ -3829,7 +3841,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def disable_tx(self):
         cmd = f"T 0"
-        self.client.send(cmd)
+        if not self.client.connected or self.client.s is None:
+            self.client = RigctlClient(HOST, PORT)
+        resp = self.client.send(cmd)
+        if resp is None:
+            # Reconnect and retry once
+            self.client = RigctlClient(HOST, PORT)
+            self.client.send(cmd)
         self.tx_sent = 0
 
     def replace_s_meter_when_tx(self, tx_state):
