@@ -486,6 +486,66 @@ class ClickableLabel(QtWidgets.QLabel):
             self.clicked.emit()
         super().mousePressEvent(event)
 
+class CwDialog(QtWidgets.QDialog):
+    """Dialog for CW Pitch (EX020) and CW Side Tone (EX022) settings."""
+
+    # EX020: 0-12 -> 300Hz to 900Hz in 50Hz steps
+    PITCH_VALUES = [f"{300 + i*50} Hz" for i in range(13)]
+
+    @staticmethod
+    def sidetone_label(v):
+        if v <= 100:
+            return f"FIX {v}"
+        else:
+            return f"LNK {v - 151:+d}"
+
+    def __init__(self, parent=None, pitch=5, sidetone=151):
+        super().__init__(parent)
+        self.setWindowTitle("CW Settings")
+        self.selected_pitch = pitch
+        self.selected_sidetone = sidetone
+
+        layout = QtWidgets.QFormLayout()
+
+        # CW Pitch
+        self.pitch_combo = QtWidgets.QComboBox()
+        self.pitch_combo.addItems(self.PITCH_VALUES)
+        self.pitch_combo.setCurrentIndex(max(0, min(12, pitch)))
+        layout.addRow("CW Pitch (EX020):", self.pitch_combo)
+
+        # CW Side Tone
+        sidetone_layout = QtWidgets.QHBoxLayout()
+        self.sidetone_spin = QtWidgets.QSpinBox()
+        self.sidetone_spin.setRange(0, 201)
+        self.sidetone_spin.setValue(max(0, min(201, sidetone)))
+        self.sidetone_info = QtWidgets.QLabel(self.sidetone_label(self.sidetone_spin.value()))
+        self.sidetone_info.setStyleSheet("color: gray;")
+        self.sidetone_spin.valueChanged.connect(
+            lambda v: self.sidetone_info.setText(self.sidetone_label(v))
+        )
+        sidetone_layout.addWidget(self.sidetone_spin)
+        sidetone_layout.addWidget(self.sidetone_info)
+        layout.addRow("CW Side Tone (EX022):", sidetone_layout)
+
+        note = QtWidgets.QLabel("0-100: FIX 0..100   101-151: LNK -50..0   151-201: LNK 0..+50")
+        note.setStyleSheet("color: gray; font-size: 8pt;")
+        layout.addRow("", note)
+
+        btn_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addRow(btn_box)
+
+        self.setLayout(layout)
+
+    def accept(self):
+        self.selected_pitch = self.pitch_combo.currentIndex()
+        self.selected_sidetone = self.sidetone_spin.value()
+        super().accept()
+
+
 class SliderDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, value=5):
         super().__init__(parent)
@@ -2409,6 +2469,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         right_grid.addWidget(self.miceq_btn, 2, 1)
 
+        self.cw_btn = QtWidgets.QPushButton("CW")
+        self.cw_btn.setFixedSize(SMALL_BTN_WIDTH, SMALL_BTN_HEIGHT)
+        self.cw_btn.setStyleSheet("background-color: " + "#e6bb4f" + "; text-align: center; border-radius: 4px; border: 1px solid black;")
+        self.cw_btn.pressed.connect(self.cw_btn_pressed)
+
+        right_grid.addWidget(self.cw_btn, 2, 2)
+
         # --- GROUP WITH FREQ CTRL BUTTONS ---
         self.group_freq_ctrl = QtWidgets.QGroupBox("Freq Ctrl")
         self.group_freq_ctrl.setObjectName("groupFreqCtrl")
@@ -4141,6 +4208,36 @@ class MainWindow(QtWidgets.QMainWindow):
                 eq_value = dlg.selected_eq
                 cmd = 'w' + cmd + str(eq_value) + ';'
                 self.client.send(cmd)
+
+    def _read_ex_value(self, ex_cmd):
+        """Read an EX parameter value. Returns integer or None on failure."""
+        resp = self.client.send('w' + ex_cmd + ';')
+        if resp and ex_cmd in resp:
+            val = resp.replace(ex_cmd, '').replace(';', '').replace('\0', '').replace('RPRT 0', '').replace('\n', '').strip()
+            try:
+                return int(val)
+            except ValueError:
+                pass
+        return None
+
+    def cw_btn_pressed(self):
+        import re as _re
+        resp = self.client.send('wEX020;EX022;')
+        if not resp:
+            return
+        m_pitch = _re.search(r'EX020(\d+)', resp)
+        m_side  = _re.search(r'EX022(\d+)', resp)
+        if not m_pitch or not m_side:
+            return
+        try:
+            pitch    = int(m_pitch.group(1))
+            sidetone = int(m_side.group(1))
+        except ValueError:
+            return
+        dlg = CwDialog(self, pitch=pitch, sidetone=sidetone)
+        if dlg.exec_():
+            self.client.send(f'wEX020{dlg.selected_pitch:02d};')
+            self.client.send(f'wEX022{dlg.selected_sidetone:03d};')
 
     def stop_swr_check(self):
         cmd = f"M " + self.current_mode + " 0"

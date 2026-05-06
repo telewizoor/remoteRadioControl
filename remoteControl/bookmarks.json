@@ -1,0 +1,57 @@
+[
+  {
+    "name": "Polska 20m",
+    "freq_hz": 14303000,
+    "mode": "USB"
+  },
+  {
+    "name": "11m local",
+    "freq_hz": 26870000,
+    "mode": "USB"
+  },
+  {
+    "name": "check",
+    "freq_hz": 14156000,
+    "mode": "USB"
+  },
+  {
+    "name": "CB CH19",
+    "freq_hz": 27180000,
+    "mode": "AM"
+  },
+  {
+    "name": "USAF",
+    "freq_hz": 11175000,
+    "mode": "USB"
+  },
+  {
+    "name": "USAF",
+    "freq_hz": 4724000,
+    "mode": "USB"
+  },
+  {
+    "name": "Ruska pogoda",
+    "freq_hz": 8939000,
+    "mode": "USB"
+  },
+  {
+    "name": "Mumbai Radio",
+    "freq_hz": 8879000,
+    "mode": "USB"
+  },
+  {
+    "name": "VOLMET",
+    "freq_hz": 8888000,
+    "mode": "USB"
+  },
+  {
+    "name": "Shannon VOLMET",
+    "freq_hz": 8957000,
+    "mode": "USB"
+  },
+  {
+    "name": "USAF",
+    "freq_hz": 8992000,
+    "mode": "USB"
+  }
+]
